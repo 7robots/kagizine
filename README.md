@@ -185,25 +185,102 @@ outlets it draws on.
 
 ## Security
 
-The reader sets exactly two things as HTML: `Paragraph.html` and list items.
-Both are sanitised in `src/kagi/feed.ts`, where `HTMLRewriter` does the parsing
-and an allowlist decides what is emitted -- nothing reaches the output that that
-file did not write, and `href`s are restricted to `http`/`https`. Everything
-else that came from a feed reaches the DOM through `textContent`. Adding a field
-to the reader means deciding which of those two categories it is in.
+**The threat model is that feed content is entirely untrusted** — item titles,
+description HTML, `<img src>` URLs, source links, even the `lastBuildDate`.
+A compromised upstream, one malicious outlet inside a cluster, or interception of
+`news.kagi.com` all land in the same place. Everything below follows from that.
 
-Three properties of `HTMLRewriter` are load-bearing and were each established by
-experiment, not assumption: text arrives with entities *undecoded* (so blind
-escaping would double-escape), attribute values likewise (so an href must be
-decoded before its scheme is checked, or `&#106;avascript:` survives), and a
+There are no accounts, no user-submitted data and no payments, so the realistic
+damage from a slip is the origin's reputation and whatever a same-origin script
+could reach. Reading is deliberately public.
+
+### The one boundary that matters
+
+The reader sets exactly two things as HTML: `Paragraph.html` and list items. Both
+are sanitised in `src/kagi/feed.ts`, where `HTMLRewriter` does the parsing and an
+allowlist decides what is emitted — nothing reaches the output that that file did
+not write. Everything else from a feed reaches the DOM through `textContent`.
+**Adding a field to the reader means deciding which of those two categories it is
+in.**
+
+Three properties of `HTMLRewriter` are load-bearing, and each was established by
+experiment rather than assumption: text arrives with entities *undecoded* (so
+blind escaping would double-escape), attribute values likewise (so an href must
+be decoded before its scheme is checked, or `&#106;avascript:` survives), and a
 `<script>` body still reaches a document text handler (so its contents must be
 muted, not merely dropped).
 
-Security headers are set in two places on purpose: `src/index.ts` for responses
-the Worker generates, and `public/_headers` for static responses that bypass the
-Worker entirely. The CSP forbids `unsafe-eval`, which is strict enough that
-Playwright's `wait_for_function` cannot run against the site — poll locators
-instead.
+### The hazard to know about
+
+**`stripTags` output contains live markup.** It removes tags and *then* decodes
+entities, so `&lt;script&gt;` comes out as `<script>` — its result is strictly
+more dangerous than its input. Every consumer routes it to `textContent` today:
+`h`-block text, `Source.title`, `Source.domain`, and the word count. Promoting
+any of those to `innerHTML` later would be instantly exploitable. The same goes
+for `figure.alt`, `figure.caption` and `article.title`, which are stored raw
+because they are only ever set as text.
+
+### URLs are checked twice
+
+Every URL from a feed goes through `isSafeUrl` (`http`/`https` only, decoded
+first) before it is stored, and the reader checks again with `safeHref` before
+assigning any `href`. Two independent checks because there was once none on
+`source_url`: a feed-supplied `javascript:` link reached an `<a href>` and was one
+click from executing in this origin, with only the CSP standing in the way.
+
+Image URLs are scheme-checked for a different reason: the Worker *fetches* them
+and republishes the bytes at `/img/<sha256>` as a public, immutable object, so an
+unchecked value is both an arbitrary-fetch primitive and free hosting on this
+domain.
+
+### What a feed does not get to choose
+
+| | |
+| --- | --- |
+| Items per feed | 60 (`MAX_ITEMS_PER_FEED`) |
+| Bytes per response | 12MB (`MAX_BODY_BYTES`) |
+| Characters per item body | 256K (`MAX_DESCRIPTION_CHARS`) |
+| Image dimensions | 200×100 to 20000×20000 |
+| Outbound request time | 45s (`FETCH_TIMEOUT_MS`) |
+| Edition date | within 30 days past, 2 days future, and `YYYY-MM-DD` exactly |
+
+The date bound is not cosmetic. It becomes an R2 key and the index sorts on it
+*as a string*, so one feed claiming `Fri, 01 Jan 9999` would have pinned the
+reader's front page to that edition permanently.
+
+Parsing is also fallible: `HTMLRewriter` throws on deeply nested inline markup,
+and unwrapped that throw escaped the whole build, so **one hostile item cost the
+entire day's edition**. Both parse and build are wrapped per item now — a story
+that will not parse is one skipped story with a warning.
+
+### Destructive operations
+
+`prune()` is the only code that deletes anything. It refuses to collect pictures
+unless every retained edition read back successfully, refuses when no editions are
+retained, and spares objects written in the last hour — which also closes the race
+between a concurrent refresh's `putImage` and its `putJson`. Each of those
+refusals corresponds to a way it previously deleted pictures that were still in
+use.
+
+### Headers
+
+Set in two places on purpose: `src/index.ts` for responses the Worker generates,
+and `public/_headers` for static responses that bypass the Worker entirely. The
+CSP forbids `unsafe-eval`, which is strict enough that Playwright's
+`wait_for_function` cannot run against the site — poll locators instead. The one
+deliberate widening is `static.cloudflareinsights.com` in `script-src` and
+`cloudflareinsights.com` in `connect-src`, for the analytics beacon Cloudflare
+injects at the edge; it adds no trust Cloudflare does not already have, since it
+terminates TLS and runs the Worker.
+
+### Reviewed
+
+Two independent reviews were run against the threat model above, between them
+throwing 66 adversarial inputs at the sanitiser — mutation XSS, every
+`javascript:` encoding they could construct, `<svg>`/`<math>` wrappers, CDATA,
+comment splicing, crossed tags. It held; every confirmed finding was on a value
+that never went through it, which is where to look first next time. Findings
+accepted rather than fixed, with reasons, are in `docs/ROADMAP.md`.
 
 ## Provenance
 
