@@ -370,3 +370,75 @@ describe('content addressing', () => {
     expect(a).not.toBe(await B.sha256Hex(fx.png(11, 10)));
   });
 });
+
+
+describe('outbound request discipline', () => {
+  /** Rejects picture requests with a typed HTTP status, as the Worker's real
+   *  fetchBytes does for any non-200 response. */
+  class Refusing extends Fake {
+    asked = 0;
+    constructor(responses: Map<string, Uint8Array | Error>) {
+      super(responses);
+    }
+    override fetchBytes = async (url: string) => {
+      this.requests.push(url);
+      if (url.startsWith('https://img')) {
+        this.asked += 1;
+        throw new B.HttpStatusError(403, url);
+      }
+      const value = (this as unknown as { responses: Map<string, Uint8Array | Error> }).responses.get(url);
+      if (value === undefined) throw new Error(`404 for ${url}`);
+      if (value instanceof Error) throw value;
+      return { data: value, contentType: null };
+    };
+  }
+
+  it('does not retry a refusal', async () => {
+    // A 403 is the same 403 a second later, and retrying it doubled the load on
+    // a host that had already answered cleanly.
+    const fake = new Refusing(
+      new Map<string, Uint8Array | Error>([
+        ['https://feed/world', encode(fx.channel('World', fx.BUILT, fx.item('Story')))],
+        ['https://feed/science', encode(fx.channel('Science', fx.BUILT, ''))],
+      ])
+    );
+    const { articles, report } = await B.buildEdition(fake.fetchBytes, fake.putImage, FEEDS);
+    expect(fake.asked).toBe(1);
+    expect(report.image_retries).toBe(0);
+    expect(articles['world/story']!.blocks.every((b) => b.kind !== 'figure')).toBe(true);
+    expect(report.warnings.some((w) => w.includes('picture unavailable'))).toBe(true);
+  });
+
+  it('caps the items taken from one feed', async () => {
+    // Items are subrequests, and an unbounded item count is a subrequest count
+    // chosen by whoever controls the feed.
+    const many = Array.from({ length: B.MAX_ITEMS_PER_FEED + 15 }, (_, i) =>
+      fx.item(`Story ${i}`, { image: null })
+    ).join('');
+    const fake = feedsWith(many);
+    const { articles, report } = await B.buildEdition(fake.fetchBytes, fake.putImage, FEEDS);
+    expect(Object.keys(articles)).toHaveLength(B.MAX_ITEMS_PER_FEED);
+    expect(report.warnings.some((w) => w.includes(`first ${B.MAX_ITEMS_PER_FEED}`))).toBe(true);
+  });
+
+  it('compares build stamps chronologically, not as strings', async () => {
+    // "Fri, 01 ..." sorts above "Mon, 10 ..." lexicographically, so a string
+    // comparison would pick the wrong build to compare against.
+    const fake = new Fake(
+      new Map<string, Uint8Array | Error>([
+        [
+          'https://feed/world',
+          encode(fx.channel('World', 'Sun, 09 Aug 2026 12:00:00 +0000', fx.item('A', { image: null }))),
+        ],
+        [
+          'https://feed/science',
+          encode(
+            fx.channel('Science', 'Mon, 10 Aug 2026 12:00:00 +0000', fx.item('B', { section: 'Science', image: null }))
+          ),
+        ],
+      ])
+    );
+    const { edition } = await B.buildEdition(fake.fetchBytes, fake.putImage, FEEDS);
+    expect(edition.built_from).toBe('Mon, 10 Aug 2026 12:00:00 +0000');
+  });
+});

@@ -25,9 +25,35 @@ export const MIN_HEIGHT = 100;
 /** Below this there is not even a header to read. */
 export const MIN_BYTES = 64;
 
+/** Items taken from any one feed.
+ *
+ *  Each item costs an image fetch, so an item count chosen by whoever controls
+ *  the feed is a subrequest count chosen by them too -- and past the plan's
+ *  ceiling the build fails every day until the feed changes. The real feeds
+ *  carry three to twelve. */
+export const MAX_ITEMS_PER_FEED = 60;
+
 export type FetchBytes = (url: string) => Promise<{ data: Uint8Array; contentType: string | null }>;
 export type PutImage = (asset: string, data: Uint8Array, mime: string) => Promise<void>;
 export type IsCurrent = (date: string, builtFrom: string) => Promise<boolean>;
+
+/** A response arrived, but with the wrong status.
+ *
+ *  Distinguished from a transport failure because the two deserve opposite
+ *  treatment: a dropped connection is worth retrying, an HTTP 403 is the same
+ *  403 a second later. Without this distinction `fetchBytes` throwing on a bad
+ *  status made every error look transient, so the image retry doubled the
+ *  request count against a host that was cleanly refusing -- the opposite of
+ *  what its own comment promised. */
+export class HttpStatusError extends Error {
+  constructor(
+    readonly status: number,
+    url: string
+  ) {
+    super(`HTTP ${status} for ${url}`);
+    this.name = 'HttpStatusError';
+  }
+}
 
 /** Raised before any picture is fetched when the feeds have not been rebuilt.
  *
@@ -44,6 +70,11 @@ export class Unchanged extends Error {
   }
 }
 
+interface ImageStats {
+  retries: number;
+  durations: number[];
+}
+
 export interface Report {
   feeds: { slug: string; url: string; built_at: string | null; items: number; kept: number }[];
   failures: { feed: string; error: string }[];
@@ -53,6 +84,9 @@ export interface Report {
   sections?: number;
   pictures?: number;
   image_retries?: number;
+  pictures_expected?: number;
+  image_ms_median?: number;
+  image_ms_slowest?: number;
   feeds_ms?: number;
   images_ms?: number;
   articles_ms?: number;
@@ -94,6 +128,8 @@ interface Picked {
   section: F.FeedSpec;
   imageUrl: string | null;
   alt: string;
+  /** Retained so the body is parsed once per item rather than twice. */
+  described: F.Described;
   image?: F.StoredImage | null;
 }
 
@@ -131,10 +167,14 @@ export async function buildEdition(
   const date = F.editionDate(channels.map((c) => c?.builtAt ?? null));
   if (!date) throw new Error('no feed reported a lastBuildDate; refusing to guess the date');
 
-  const builtFrom = channels.reduce<string>(
-    (latest, channel) => (channel?.builtAt && channel.builtAt > latest ? channel.builtAt : latest),
-    ''
-  );
+  // Compared as instants, not as strings: "Fri, 01 ..." sorts above
+  // "Mon, 10 ..." lexicographically, which would make the idempotency check
+  // compare against the wrong build whenever the feeds' stamps diverge.
+  const builtFrom = channels.reduce<string>((latest, channel) => {
+    if (!channel?.builtAt) return latest;
+    if (!latest) return channel.builtAt;
+    return new Date(channel.builtAt) > new Date(latest) ? channel.builtAt : latest;
+  }, '');
   report.feeds_ms = Date.now() - clock;
 
   // Nothing new upstream: stop here, before the expensive half.
@@ -148,7 +188,12 @@ export async function buildEdition(
     const channel = channels[index];
     if (!channel) continue;
     let kept = 0;
-    for (const fields of channel.items) {
+    if (channel.items.length > MAX_ITEMS_PER_FEED) {
+      report.warnings.push(
+        `${feed.slug}: ${channel.items.length} items, taking the first ${MAX_ITEMS_PER_FEED}`
+      );
+    }
+    for (const fields of channel.items.slice(0, MAX_ITEMS_PER_FEED)) {
       if (!fields.title) continue;
       const key = F.slugify(fields.title);
       if (seen.has(key)) {
@@ -160,7 +205,7 @@ export async function buildEdition(
       seen.add(key);
       const described = await F.describe(fields.description);
       const { url, alt } = F.leadImage(described);
-      picked.push({ fields, section: feed, imageUrl: url, alt });
+      picked.push({ fields, section: feed, imageUrl: url, alt, described });
       kept += 1;
     }
     report.feeds.push({
@@ -176,7 +221,7 @@ export async function buildEdition(
 
   // --- the pictures -----------------------------------------------------
   clock = Date.now();
-  const stats = { retries: 0 };
+  const stats: ImageStats = { retries: 0, durations: [] };
   const wanted = picked.filter((p) => p.imageUrl);
   const stored = await gatherLimited(
     wanted.map((p) => () => fetchImage(fetchBytes, putImage, p.imageUrl!, stats))
@@ -195,6 +240,16 @@ export async function buildEdition(
   });
   report.images_ms = Date.now() - clock;
   report.image_retries = stats.retries;
+  report.pictures_expected = wanted.length;
+
+  // Per-request timings, because this runs unattended and a build once lost every
+  // picture in the edition to a deadline that looked generous. If the pictures
+  // start creeping towards the timeout, the report says so before they vanish.
+  const sorted = [...stats.durations].sort((a, b) => a - b);
+  if (sorted.length) {
+    report.image_ms_median = sorted[Math.floor(sorted.length / 2)];
+    report.image_ms_slowest = sorted[sorted.length - 1];
+  }
 
   // --- articles and sections -------------------------------------------
   clock = Date.now();
@@ -203,7 +258,7 @@ export async function buildEdition(
   const order = new Map(feeds.map((feed, index) => [feed.slug, index]));
 
   for (const p of picked) {
-    const article = await F.buildArticle(p.fields, p.section, p.image ?? null);
+    const article = await F.buildArticle(p.fields, p.section, p.image ?? null, p.described);
     if (articles[article.id]) {
       // The same headline twice inside one section.
       article.slug = `${article.slug}-${Object.keys(articles).length}`;
@@ -242,6 +297,14 @@ export async function buildEdition(
   report.articles = Object.keys(articles).length;
   report.sections = sections.length;
   report.pictures = picked.filter((p) => p.image).length;
+  if (report.pictures_expected && report.pictures < report.pictures_expected / 2) {
+    // Publishing a pictureless edition is better than publishing none, but it is
+    // the loudest possible symptom of a broken fetch path and must not pass
+    // unremarked in a log nobody reads by default.
+    report.warnings.push(
+      `only ${report.pictures} of ${report.pictures_expected} pictures were fetched`
+    );
+  }
   // Recorded because this runs unattended: a refresh creeping towards the CPU
   // limit should be visible in the stored report rather than discovered when it
   // first fails.
@@ -267,16 +330,21 @@ async function fetchImage(
   fetchBytes: FetchBytes,
   putImage: PutImage,
   url: string,
-  stats: { retries: number }
+  stats: ImageStats
 ): Promise<F.StoredImage | null> {
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     let data: Uint8Array;
+    const started = Date.now();
     try {
       ({ data } = await fetchBytes(url));
+      stats.durations.push(Date.now() - started);
     } catch (error) {
       lastError = error;
+      // A refusal is not transient. Retrying it only doubles the load on a host
+      // that has already answered.
+      if (error instanceof HttpStatusError) break;
       stats.retries += 1;
       continue;
     }

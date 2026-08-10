@@ -227,7 +227,7 @@ function collapse(text: string): string {
   return text.replace(/[ \t\r\n]+/g, ' ').trim();
 }
 
-function isSafeUrl(url: string): boolean {
+export function isSafeUrl(url: string): boolean {
   const lowered = url.trim().toLowerCase();
   return lowered.startsWith('http://') || lowered.startsWith('https://');
 }
@@ -299,7 +299,12 @@ export async function describe(markup: string): Promise<Described> {
     .on('img', {
       element(element) {
         const src = decodeEntities(element.getAttribute('src') ?? '');
-        if (!src) return;
+        // Scheme-checked for the same reason hrefs are, and it was missing here
+        // at first. This URL is *fetched* by the Worker and its bytes are then
+        // republished at kagizine.7robots.org/img/<hash> as a public, immutable
+        // object -- so an unchecked value is an arbitrary-URL fetch primitive
+        // and free hosting on this domain, attributable to its owner.
+        if (!src || !isSafeUrl(src)) return;
         out.images.push({
           src,
           alt: collapse(decodeEntities(element.getAttribute('alt') ?? '')),
@@ -458,26 +463,49 @@ export function now(): string {
   return isoUtc(new Date())!;
 }
 
+/** How far from now a feed's claimed build date may be before we refuse it. */
+const MAX_FUTURE_DAYS = 2;
+const MAX_PAST_DAYS = 30;
+const DAY_MS = 86_400_000;
+
 /**
  * The edition's date, taken from the feeds' own lastBuildDate.
  *
- * Deliberately not from the Worker's clock. Kagi rebuilds at 08:00 Eastern,
- * which is either 12:00 or 13:00 UTC depending on the season, so asking the
- * Worker what day it is would need a timezone the Worker has no business
- * knowing. The feed states when it was built, so the feed decides which day
- * this is -- and a manual refresh late at night then rebuilds the same edition
- * rather than opening an empty one for tomorrow.
+ * Deliberately not from the Worker's clock, for the date *itself*: Kagi rebuilds
+ * at 08:00 Eastern, which is either 12:00 or 13:00 UTC depending on the season,
+ * so asking the Worker what day it is would need a timezone it has no business
+ * knowing. The feed states when it was built, so the feed decides which day this
+ * is -- and a manual refresh late at night then rebuilds the same edition rather
+ * than opening an empty one for tomorrow.
+ *
+ * The clock is used only to bound the answer, which is not optional. This date
+ * becomes an R2 key and the index sorts on it *as a string*, so one feed
+ * reporting "Fri, 01 Jan 9999" would store editions/9999-01-01.json, sort first
+ * for ever, and pin the reader's front page to it permanently -- with no way back
+ * except editing the bucket by hand. Beyond year 9999 it is worse: toISOString()
+ * switches to expanded years, so the first ten characters are "+275760-09",
+ * which is not a date, never matches the route pattern, and yields an edition
+ * that cannot be fetched at all.
  */
-export function editionDate(builtDates: (string | null)[]): string | null {
+export function editionDate(
+  builtDates: (string | null)[],
+  reference: Date = new Date()
+): string | null {
   let latest: Date | null = null;
   for (const raw of builtDates) {
     if (!raw) continue;
     const date = new Date(raw);
     if (Number.isNaN(date.getTime())) continue;
+    const offset = date.getTime() - reference.getTime();
+    if (offset > MAX_FUTURE_DAYS * DAY_MS || offset < -MAX_PAST_DAYS * DAY_MS) continue;
     if (!latest || date > latest) latest = date;
   }
   if (!latest) return null;
-  return latest.toISOString().slice(0, 10);
+
+  const date = latest.toISOString().slice(0, 10);
+  // Belt and braces: nothing may become a key or a route parameter unless it is
+  // exactly YYYY-MM-DD.
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
 }
 
 export function editionTitle(date: string): string {
@@ -499,9 +527,13 @@ export function leadImage(described: Described): { url: string | null; alt: stri
 export async function buildArticle(
   fields: ItemFields,
   section: FeedSpec,
-  image: StoredImage | null
+  image: StoredImage | null,
+  /** The result of `describe(fields.description)` if the caller already has it.
+   *  The build does, from finding the lead image, and parsing the same body
+   *  twice is the largest avoidable cost in the whole refresh. */
+  precomputed?: Described
 ): Promise<Article> {
-  const described = await describe(fields.description);
+  const described = precomputed ?? (await describe(fields.description));
   const blocks: Block[] = [];
   const words: string[] = [];
 
@@ -555,7 +587,12 @@ export async function buildArticle(
     dek: null, // Kagi items carry no standfirst; the kicker line does that job
     rubric: fields.subcategory || section.title,
     section_slug: section.slug,
-    source_url: fields.link,
+    // Scheme-checked because the reader assigns this straight to an <a href>.
+    // Every other URL in the pipeline went through isSafeUrl; this one did not,
+    // which made a feed-supplied `javascript:` link one click from executing in
+    // this origin. The CSP happened to block it, but that is a second line of
+    // defence, not this field's licence to carry anything.
+    source_url: isSafeUrl(fields.link) ? fields.link : '',
     published: fields.published,
     word_count: wordCount(words.join(' ')),
     blocks,

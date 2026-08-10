@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "tail": "wrangler tail kagizine --format pretty",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "types": "wrangler types"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.21.0",

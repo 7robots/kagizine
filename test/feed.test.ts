@@ -256,24 +256,56 @@ group('word counts', () => {
 });
 
 group('dates', () => {
+  // Pinned, so these do not start failing as the calendar moves past the
+  // freshness window that editionDate now enforces.
+  const NOW = new Date('2026-08-10T12:30:00Z');
+
   it('takes the latest build date', () => {
     expect(
-      F.editionDate([
-        'Mon, 10 Aug 2026 12:01:32 +0000',
-        'Mon, 10 Aug 2026 12:04:00 +0000',
-        'Sun, 09 Aug 2026 12:00:00 +0000',
-      ])
+      F.editionDate(
+        [
+          'Mon, 10 Aug 2026 12:01:32 +0000',
+          'Mon, 10 Aug 2026 12:04:00 +0000',
+          'Sun, 09 Aug 2026 12:00:00 +0000',
+        ],
+        NOW
+      )
     ).toBe('2026-08-10');
   });
 
   it('ignores unparseable and empty values', () => {
-    expect(F.editionDate(['', 'not a date', 'Mon, 10 Aug 2026 12:01:32 +0000'])).toBe('2026-08-10');
-    expect(F.editionDate([])).toBeNull();
-    expect(F.editionDate(['nonsense'])).toBeNull();
+    expect(F.editionDate(['', 'not a date', 'Mon, 10 Aug 2026 12:01:32 +0000'], NOW)).toBe(
+      '2026-08-10'
+    );
+    expect(F.editionDate([], NOW)).toBeNull();
+    expect(F.editionDate(['nonsense'], NOW)).toBeNull();
   });
 
   it('normalises to UTC, so Eastern morning is the same day', () => {
-    expect(F.editionDate(['Mon, 10 Aug 2026 08:01:00 -0400'])).toBe('2026-08-10');
+    expect(F.editionDate(['Mon, 10 Aug 2026 08:01:00 -0400'], NOW)).toBe('2026-08-10');
+  });
+
+  it('refuses a date far in the future', () => {
+    // Unbounded, this pins the reader's front page for ever: the index sorts
+    // dates as strings, so 9999-01-01 can never be displaced.
+    expect(F.editionDate(['Fri, 01 Jan 9999 00:00:00 GMT'], NOW)).toBeNull();
+    expect(F.editionDate(['Sat, 09 Aug 2099 12:00:00 GMT'], NOW)).toBeNull();
+  });
+
+  it('refuses a date far in the past', () => {
+    expect(F.editionDate(['Thu, 01 Jan 1970 00:00:00 GMT'], NOW)).toBeNull();
+  });
+
+  it('refuses a year beyond four digits rather than emitting a non-date', () => {
+    // toISOString() switches to expanded years there, so the first ten
+    // characters would be '+275760-09' -- unmatched by the route pattern, and
+    // an edition that could never be fetched.
+    expect(F.editionDate(['+275760-09-13T00:00:00Z'], NOW)).toBeNull();
+  });
+
+  it('accepts a build a little ahead of the clock', () => {
+    // Feeds and Workers do not share a clock; a few hours of skew is normal.
+    expect(F.editionDate(['Mon, 10 Aug 2026 20:00:00 +0000'], NOW)).toBe('2026-08-10');
   });
 
   it.each([
@@ -429,5 +461,77 @@ group('feed configuration', () => {
     const boston = F.FEEDS.find((f) => f.slug === 'boston')!;
     expect(boston.url).not.toContain('|');
     expect(boston.url).toContain('%7C');
+  });
+});
+
+
+group('url validation at the data boundary', () => {
+  const SECTION: F.FeedSpec = { slug: 'world', title: 'World', url: 'https://feed/world' };
+
+  const withLink = (link: string): F.ItemFields => ({
+    title: 'A story',
+    link,
+    description: '<p>Body.</p>',
+    subcategory: 'Wildfires',
+    published: null,
+  });
+
+  it.each([
+    ['javascript:alert(1)'],
+    ['data:text/html,<script>alert(1)</script>'],
+    ['vbscript:msgbox'],
+    ['  javascript:alert(1)'],
+    ['JaVaScRiPt:alert(1)'],
+  ])('empties source_url for the unsafe scheme %s', async (link) => {
+    // The reader assigns source_url straight to an href, so an unsafe scheme
+    // here is one click from executing in this origin.
+    const article = await F.buildArticle(withLink(link), SECTION, null);
+    expect(article.source_url).toBe('');
+  });
+
+  it('keeps an ordinary link', async () => {
+    const article = await F.buildArticle(withLink('https://kite.kagi.com/world/1/x'), SECTION, null);
+    expect(article.source_url).toBe('https://kite.kagi.com/world/1/x');
+  });
+
+  it.each([
+    ['javascript:alert(1)'],
+    ['file:///etc/passwd'],
+    ['data:image/png;base64,AAAA'],
+    ['//evil.example/x.png'],
+  ])('ignores an img src with the unsafe scheme %s', async (src) => {
+    // This URL is fetched by the Worker and its bytes republished publicly under
+    // this domain, so an unchecked value is both an arbitrary-fetch primitive
+    // and free hosting.
+    const described = await F.describe(`<p>a</p><img src="${src}" alt="x"/>`);
+    expect(described.images).toEqual([]);
+    expect(F.leadImage(described)).toEqual({ url: null, alt: '' });
+  });
+
+  it('keeps an http(s) img src', async () => {
+    const described = await F.describe('<p>a</p><img src="https://i.example/a.png" alt="x"/>');
+    expect(described.images).toHaveLength(1);
+  });
+
+  it('exposes isSafeUrl for callers at the boundary', () => {
+    expect(F.isSafeUrl('https://x.test')).toBe(true);
+    expect(F.isSafeUrl('http://x.test')).toBe(true);
+    expect(F.isSafeUrl('javascript:x')).toBe(false);
+    expect(F.isSafeUrl('')).toBe(false);
+  });
+});
+
+group('parsing the body once', () => {
+  it('accepts a precomputed description rather than reparsing', async () => {
+    const fields: F.ItemFields = {
+      title: 'Reused',
+      link: 'https://x.test/a',
+      description: '<p>ignored if precomputed is supplied</p>',
+      subcategory: '',
+      published: null,
+    };
+    const precomputed = await F.describe('<p>from the precomputed pass</p>');
+    const article = await F.buildArticle(fields, { slug: 'world', title: 'World', url: 'u' }, null, precomputed);
+    expect(article.blocks[0]).toMatchObject({ kind: 'p', html: 'from the precomputed pass' });
   });
 });

@@ -45,6 +45,16 @@ function assetUrl(name) {
   return '/img/' + name;
 }
 
+/* Never assign a URL from stored data to an href without checking its scheme.
+ *
+ * The Worker validates these before storing, so this is the second of two
+ * independent checks rather than the only one -- but it is the one standing
+ * directly in front of the DOM, and an href is the one place a `javascript:`
+ * URL becomes script. Cheap enough to apply at every assignment. */
+function safeHref(url) {
+  return /^https?:\/\//i.test(String(url || '').trim()) ? url : null;
+}
+
 /** "Sat 9 Aug" -- enough to place a story in the week without being noise. */
 function shortDate(iso) {
   if (!iso) return '';
@@ -335,12 +345,17 @@ function sourceList(a) {
   wrap.append(summary);
   const ul = el('ul');
   for (const s of a.sources) {
+    const href = safeHref(s.url);
     const li = document.createElement('li');
-    const link = el('a', null, s.title || s.url);
-    link.href = s.url;
-    link.target = '_blank';
-    link.rel = 'noreferrer noopener';
-    li.append(link);
+    if (href) {
+      const link = el('a', null, s.title || s.url);
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noreferrer noopener';
+      li.append(link);
+    } else {
+      li.append(el('span', null, s.title || ''));
+    }
     if (s.domain) li.append(el('span', 'domain', s.domain));
     ul.append(li);
   }
@@ -371,9 +386,10 @@ function renderArticle(date, id) {
   }
   article.append(prose);
 
-  if (a.source_url) {
+  const sourceHref = safeHref(a.source_url);
+  if (sourceHref) {
     const link = el('a', 'source-link', 'Open on Kagi News');
-    link.href = a.source_url;
+    link.href = sourceHref;
     link.target = '_blank';
     link.rel = 'noreferrer noopener';
     article.append(link);

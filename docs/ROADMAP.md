@@ -21,9 +21,24 @@ Single source of truth for planned and deferred work on kagizine.
 ## Deferred
 
 - **Caching R2 reads at the edge.** `/api/editions/:date` and `/img/:asset` go to
-  R2 on every request, which measures at 40–100ms. Both are effectively
-  immutable, so wrapping them in the Cache API would take repeat reads off R2
-  entirely. Not urgent at one reader.
+  R2 on every request, which measures at 40–100ms. Worker-generated responses are
+  not stored in Cloudflare's cache automatically, so the `max-age` and
+  `immutable` headers only ever reach the browser. Wrapping the three read paths
+  in `caches.default` would take repeat reads off R2 entirely. Raised by the
+  security review as the remaining denial-of-wallet exposure; not urgent at one
+  reader, since R2 has no egress fee and both operation classes are far inside
+  the free tier.
+- **Why the image phase takes 60–120 seconds.** Unexplained, and the same in
+  Python and TypeScript. The proxy answers a plain curl in 300–400ms, it is not
+  the User-Agent, and it is not CPU (307ms for a whole build). A 10-second
+  deadline lost every picture, which is how the current 45s backstop was arrived
+  at. The refresh now records median and slowest picture times, so the next
+  unattended run should settle it.
+- **An allowlist for the image host.** `<img src>` is scheme-checked now, but any
+  http(s) URL a feed supplies is still fetched and republished at
+  `/img/<hash>` as a public immutable object. Restricting it to Kagi's proxy host
+  would close that as free hosting; the cost is that images vanish silently if
+  Kagi changes hosts.
 - **The WebGL page curl** (`public/js/curl.js`, `USE_CURL = false` in
   `magazine.js`). Complete, and its pieces verify in isolation — WebGL2
   initialises and `Curl.capture` returns a correctly sized raster of a real page

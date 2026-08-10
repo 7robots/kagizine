@@ -153,6 +153,29 @@ export async function deleteKeys(bucket: R2Bucket, keys: string[]): Promise<void
   }
 }
 
+/** Keys under a prefix with their upload times, for the age guard below. */
+async function listObjects(
+  bucket: R2Bucket,
+  prefix: string
+): Promise<{ key: string; uploaded: Date }[]> {
+  const out: { key: string; uploaded: Date }[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const listing = await bucket.list({ prefix, limit: 1000, cursor });
+    for (const object of listing.objects) out.push({ key: object.key, uploaded: object.uploaded });
+    if (!listing.truncated) return out;
+    cursor = listing.cursor;
+  }
+}
+
+/** How recently an object may have been written and still be spared.
+ *
+ *  `refresh` is reachable from the cron and from POST /admin/refresh, so two can
+ *  overlap. If B's prune runs between A's putImage and A's putJson, A's pictures
+ *  are not yet referenced by any stored edition and look exactly like orphans.
+ *  Sparing anything newly written closes that race without any locking. */
+const GRACE_MS = 60 * 60 * 1000;
+
 /**
  * Drop editions past the retention window, then collect orphaned pictures.
  *
@@ -163,8 +186,9 @@ export async function deleteKeys(bucket: R2Bucket, keys: string[]): Promise<void
 export async function prune(
   bucket: R2Bucket,
   generatedAt: string,
-  keep = KEEP_EDITIONS
-): Promise<{ editions_removed: string[]; images_removed: number }> {
+  keep = KEEP_EDITIONS,
+  now: number = Date.now()
+): Promise<{ editions_removed: string[]; images_removed: number; collection_skipped?: string }> {
   const index = await readIndex(bucket);
   const entries = [...index.editions].sort((a, b) => (a.date < b.date ? 1 : -1));
   const keeping = entries.slice(0, keep);
@@ -175,11 +199,33 @@ export async function prune(
   }
   if (dropping.length) await writeIndex(bucket, keeping, generatedAt);
 
+  // An empty index means we know of no editions, which is not the same as
+  // knowing that no picture is referenced. Collecting here would delete every
+  // picture in the bucket on the strength of a file that failed to load.
+  if (!keeping.length) {
+    return {
+      editions_removed: dropping.map((e) => e.date),
+      images_removed: 0,
+      collection_skipped: 'no retained editions in the index',
+    };
+  }
+
   // Which pictures are still spoken for.
   const live = new Set<string>();
   for (const entry of keeping) {
     const day = await getJson<StoredDay>(bucket, editionKey(entry.date));
-    if (!day) continue;
+    // A retained edition that will not read back tells us nothing about what it
+    // references. Treating that as "references nothing" is how a collector
+    // deletes the pictures of a day it merely failed to open, leaving an edition
+    // pointing at objects that no longer exist. Nothing is collected unless
+    // every retained edition has been read.
+    if (!day) {
+      return {
+        editions_removed: dropping.map((e) => e.date),
+        images_removed: 0,
+        collection_skipped: `could not read edition ${entry.date}`,
+      };
+    }
     if (day.edition.cover_asset) live.add(imageKey(day.edition.cover_asset));
     for (const article of Object.values(day.articles)) {
       for (const block of article.blocks) {
@@ -188,7 +234,10 @@ export async function prune(
     }
   }
 
-  const orphans = (await listKeys(bucket, 'img/')).filter((key) => !live.has(key));
+  const orphans = (await listObjects(bucket, 'img/'))
+    .filter((object) => !live.has(object.key))
+    .filter((object) => now - object.uploaded.getTime() > GRACE_MS)
+    .map((object) => object.key);
   await deleteKeys(bucket, orphans);
 
   return { editions_removed: dropping.map((e) => e.date), images_removed: orphans.length };
