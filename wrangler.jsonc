@@ -1,0 +1,85 @@
+/**
+ * kagizine -- Kagi News as a page-turning magazine.
+ *
+ * A Python Worker (Pyodide). Deploy with `npm run deploy`, which shells out to
+ * `uv run pywrangler deploy` -- pywrangler resolves the Python dependencies and
+ * snapshots the interpreter's linear memory before handing off to wrangler, so
+ * plain `wrangler deploy` would ship a Worker that cold-starts far slower.
+ *
+ * Secrets (via `wrangler secret put`, never here):
+ *   REFRESH_TOKEN -- bearer token for POST /admin/refresh. Canonical value is
+ *                    the concealed field of the same name on the `kagizine`
+ *                    item in the 1Password `Employee` vault. If it is unset the
+ *                    route 404s, which is the safe direction to fail.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kagizine",
+  "main": "src/worker.py",
+
+  // Pinned deliberately. The compatibility date selects the Pyodide build, so
+  // moving it changes the Python runtime under the Worker -- that is a
+  // deliberate upgrade with a redeploy and a smoke test, never a drive-by edit.
+  //
+  // It must also not run ahead of the workerd binary that wrangler ships: a
+  // date the local runtime does not know about fails to start with "newest date
+  // supported by this server binary", so raising this means upgrading wrangler
+  // in the same commit.
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["python_workers"],
+
+  "observability": { "enabled": true },
+
+  /**
+   * The reader itself: plain HTML, CSS and classic scripts, served by the
+   * Assets layer without invoking the Worker at all.
+   *
+   * No `run_worker_first`: every path the Worker owns (/api/*, /img/*,
+   * /admin/*) is absent from the asset manifest and therefore falls through to
+   * the Worker on its own. Letting assets answer first is what keeps the
+   * flipbook's JS and CSS on the edge cache rather than behind Pyodide.
+   */
+  "assets": {
+    "directory": "./public/",
+    "binding": "ASSETS"
+  },
+
+  /**
+   * One bucket holds the whole publication: the edition index, a JSON document
+   * per day, the refresh reports, and the pictures under content-addressed
+   * keys. R2 rather than D1 because none of it is relational -- a day's edition
+   * is a document the reader consumes whole, and the pictures are blobs.
+   */
+  "r2_buckets": [
+    {
+      "binding": "EDITIONS",
+      "bucket_name": "kagizine"
+    }
+  ],
+
+  /**
+   * Two firings, both aimed at the same event.
+   *
+   * Kagi News rebuilds its feeds at 08:00 US/Eastern. Cron triggers are UTC
+   * only, and 08:00 Eastern is 12:00 UTC under EDT but 13:00 UTC under EST, so
+   * a single entry would silently drift by an hour every time the clocks
+   * change. Both fire year-round and the refresh is idempotent -- it compares
+   * the feeds' lastBuildDate against what is already stored and returns
+   * "unchanged" -- so whichever one arrives second costs four conditional GETs.
+   */
+  "triggers": {
+    "crons": ["15 12 * * *", "15 13 * * *"]
+  },
+
+  /**
+   * kagizine.7robots.org, following the <app>.7robots.org convention. A custom
+   * domain rather than a route: it provisions the DNS record and certificate,
+   * and the Worker owns the whole hostname.
+   */
+  "routes": [
+    {
+      "pattern": "kagizine.7robots.org",
+      "custom_domain": true
+    }
+  ]
+}

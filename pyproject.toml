@@ -1,0 +1,25 @@
+[project]
+name = "kagizine"
+version = "1.0.0"
+description = "Page-turning magazine reader for the Kagi News daily feeds"
+readme = "README.md"
+# Pinned to what Pyodide provides in the Workers runtime. Tests must run on the
+# same version the Worker does, or the suite is reassuring about the wrong
+# interpreter.
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "workers-py",
+    "workers-runtime-sdk",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+# src/ is the Worker's module root -- `from kagi import feed` has to resolve the
+# same way here as it does under Pyodide.
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"

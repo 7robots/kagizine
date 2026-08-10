@@ -438,6 +438,26 @@ body.in-magazine .topbar { display: none; }
 .empty { max-width: 32rem; margin: 6rem auto; text-align: center; color: var(--ink-soft); }
 .empty code { font-family: ui-monospace, Menlo, monospace; background: var(--accent-soft); padding: 0.15em 0.4em; border-radius: 0.2rem; }
 
+/* Standing in for an edition: nothing published yet, or the fetch failed. */
+.notice { max-width: 34rem; margin: 6rem auto; text-align: center; }
+.notice h1 { font-family: var(--sans); font-size: 1.5rem; font-weight: 700; letter-spacing: -0.015em; margin: 0 0 0.75rem; }
+.notice p { color: var(--ink-soft); font-size: 1rem; line-height: 1.5; margin: 0 0 1.75rem; text-wrap: pretty; }
+
+.notice-retry {
+  font-family: var(--sans);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--paper);
+  background: var(--accent);
+  border: 0;
+  border-radius: 999px;
+  padding: 0.6rem 1.3rem;
+  cursor: pointer;
+}
+
+.notice-retry:hover { filter: brightness(1.12); }
+
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }

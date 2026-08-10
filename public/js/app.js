@@ -1,12 +1,13 @@
 /* The reader.
  *
- * Deliberately a single classic script with no build step and no framework:
- * this has to keep working offline, unchanged, years from now. State lives in
- * the URL hash so back/forward and reload land where you were.
+ * Deliberately a single classic script with no build step and no framework: it
+ * is served as-is from the Assets layer, so it never waits on Pyodide and there
+ * is no bundle to invalidate. State lives in the URL hash, so back/forward and
+ * reload land where you were.
  *
  * Every string that came from the feed is inserted as textContent. Only
  * `Paragraph.html` and list items are set as HTML, and those are sanitised in
- * fetch_kagi.py at the data boundary; everything else is plain text and must
+ * src/kagi/feed.py at the data boundary; everything else is plain text and must
  * be escaped, which is what textContent does for us.
  */
 'use strict';
@@ -18,14 +19,14 @@ const editionName = document.getElementById('edition-name');
 
 const state = { date: null, edition: null, articles: null };
 
-/* One global holding every stored edition.
+/* Everything fetched so far.
  *
- * `fetch_kagi.py` writes data.js beside index.html, so the folder opens
- * straight from file:// with no server at all. That works only because
- * everything here is a classic script -- ES modules and fetch() both die on
- * file://'s opaque origin, which is why this reader has no build step and no
- * imports. */
-const DATA = typeof window.KN_DATA !== 'undefined' ? window.KN_DATA : null;
+ * An edition is a single JSON document of a few hundred kilobytes, so it is
+ * cached whole for the session: paging between contents, a story and magazine
+ * mode then costs nothing, and the archive can be browsed without refetching
+ * the day you came from.
+ */
+const cache = { editions: null, byDate: Object.create(null) };
 
 // ---------------------------------------------------------------- helpers
 
@@ -41,16 +42,7 @@ function readingTime(words) {
 }
 
 function assetUrl(name) {
-  return 'assets/' + name;
-}
-
-function editions() {
-  return DATA ? DATA.editions : [];
-}
-
-function latestDate() {
-  const list = editions();
-  return list.length ? list[0].date : null;
+  return '/img/' + name;
 }
 
 /** "Sat 9 Aug" -- enough to place a story in the week without being noise. */
@@ -61,9 +53,10 @@ function shortDate(iso) {
   return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-function longDate(iso) {
-  const d = new Date(iso + 'T12:00:00');
-  if (isNaN(d)) return iso;
+function longDate(date) {
+  // Midday, so a timezone west of UTC cannot roll the date back a day.
+  const d = new Date(date + 'T12:00:00');
+  if (isNaN(d)) return date;
   return d.toLocaleDateString(undefined, {
     weekday: 'long',
     day: 'numeric',
@@ -92,28 +85,91 @@ function uniqueDomains(sources) {
   return seen;
 }
 
-function noData() {
-  const p = el('p', 'empty');
-  p.append('No editions yet. Run ');
-  p.append(el('code', null, 'uv run fetch_kagi.py'));
-  p.append(' to pull today’s Kagi News.');
-  app.replaceChildren(p);
+// -------------------------------------------------------------------- api
+
+async function getJSON(path) {
+  const r = await fetch(path, { headers: { accept: 'application/json' } });
+  if (!r.ok) {
+    const err = new Error('HTTP ' + r.status);
+    err.status = r.status;
+    throw err;
+  }
+  return r.json();
+}
+
+async function loadIndex(force) {
+  if (cache.editions && !force) return cache.editions;
+  const data = await getJSON('/api/editions');
+  cache.editions = data.editions || [];
+  return cache.editions;
+}
+
+async function loadEdition(date) {
+  if (state.date === date && state.edition) return true;
+  if (!cache.byDate[date]) {
+    try {
+      cache.byDate[date] = await getJSON('/api/editions/' + encodeURIComponent(date));
+    } catch (e) {
+      if (e.status === 404) return false;
+      throw e;
+    }
+  }
+  const day = cache.byDate[date];
+  state.date = date;
+  state.edition = day.edition;
+  state.articles = day.articles;
+  return true;
+}
+
+function latestDate() {
+  return cache.editions && cache.editions.length ? cache.editions[0].date : null;
+}
+
+// ------------------------------------------------------------------ notices
+
+function notice(heading, detail, retry) {
+  const wrap = el('div', 'notice');
+  wrap.append(el('h1', null, heading));
+  if (detail) wrap.append(el('p', null, detail));
+  if (retry) {
+    const btn = el('button', 'notice-retry', 'Try again');
+    btn.addEventListener('click', () => route(true));
+    wrap.append(btn);
+  }
+  app.replaceChildren(wrap);
   editionName.textContent = 'Kagi News';
   backBtn.hidden = true;
   archiveBtn.hidden = true;
 }
 
+function noEditions() {
+  notice(
+    'Nothing published yet',
+    'The first edition is built by the daily refresh, shortly after 08:15 Eastern. ' +
+      'If this is a new deployment, nothing has run yet.',
+    true
+  );
+}
+
+function offline(e) {
+  notice(
+    'Could not reach the edition',
+    'The reader is here but the day’s stories did not load' + (e && e.status ? ' (HTTP ' + e.status + ')' : '') + '.',
+    true
+  );
+}
+
 // ------------------------------------------------------------------ archive
 
 function renderArchive() {
-  const list = editions();
+  const list = cache.editions || [];
   document.title = 'Kagi News';
   editionName.textContent = 'Kagi News';
   backBtn.hidden = true;
   archiveBtn.hidden = true;
   app.replaceChildren();
 
-  if (!list.length) return noData();
+  if (!list.length) return noEditions();
 
   const wrap = el('div', 'shelf');
   wrap.append(el('h1', null, 'Archive'));
@@ -141,23 +197,12 @@ function renderArchive() {
   }
   wrap.append(ul);
   app.append(wrap);
+  window.scrollTo(0, 0);
 }
 
 // --------------------------------------------------------------- contents
 
-function loadEdition(date) {
-  if (state.date === date && state.edition) return true;
-  const day = DATA && DATA.byDate[date];
-  if (!day) return false;
-  state.date = date;
-  state.edition = day.edition;
-  state.articles = day.articles;
-  return true;
-}
-
 function renderContents(date) {
-  if (!loadEdition(date)) return renderArchive();
-
   document.title = state.edition.title;
   editionName.textContent = 'Kagi News';
   backBtn.hidden = true;
@@ -166,15 +211,18 @@ function renderContents(date) {
 
   const wrap = el('div', 'contents');
   const head = el('header', 'contents-head');
-  head.append(el('p', 'contents-eyebrow', 'Today’s edition'));
+  head.append(
+    el('p', 'contents-eyebrow', date === latestDate() ? 'Today’s edition' : 'From the archive')
+  );
   head.append(el('h1', null, longDate(state.edition.date)));
 
-  const total = state.edition.sections.reduce((n, s) => n + s.article_ids.length, 0);
-  const words = state.edition.sections
-    .flatMap((s) => s.article_ids)
-    .reduce((n, id) => n + ((state.articles[id] && state.articles[id].word_count) || 0), 0);
+  const ids = orderedIds();
+  const words = ids.reduce(
+    (n, id) => n + ((state.articles[id] && state.articles[id].word_count) || 0),
+    0
+  );
   head.append(
-    el('p', 'contents-sub', total + ' stories · about ' + readingTime(words) + ' end to end')
+    el('p', 'contents-sub', ids.length + ' stories · about ' + readingTime(words) + ' end to end')
   );
 
   const readBtn = el('a', 'read-cta', 'Read as a magazine');
@@ -283,8 +331,7 @@ function sourceList(a) {
   const wrap = document.createElement('details');
   wrap.className = 'sources';
   const summary = document.createElement('summary');
-  summary.textContent =
-    a.sources.length + (a.sources.length === 1 ? ' source' : ' sources');
+  summary.textContent = a.sources.length + (a.sources.length === 1 ? ' source' : ' sources');
   wrap.append(summary);
   const ul = el('ul');
   for (const s of a.sources) {
@@ -302,7 +349,6 @@ function sourceList(a) {
 }
 
 function renderArticle(date, id) {
-  if (!loadEdition(date)) return renderArchive();
   const a = state.articles[id];
   if (!a) return renderContents(date);
 
@@ -386,17 +432,18 @@ function renderArticleFlow(a, section) {
   }
 
   // The story closes on its sources, compressed to outlets. Naming who
-  // reported it belongs on the page; forty headlines and URLs do not.
+  // reported it belongs on the page; sixty headlines and URLs do not.
   const domains = uniqueDomains(a.sources);
   if (domains.length) {
     const shown = domains.slice(0, 10);
     const rest = domains.length - shown.length;
-    const line = el(
-      'p',
-      'flow-sources',
-      'Reported by ' + shown.join(' · ') + (rest > 0 ? ' and ' + rest + ' more' : '')
+    flow.append(
+      el(
+        'p',
+        'flow-sources',
+        'Reported by ' + shown.join(' · ') + (rest > 0 ? ' and ' + rest + ' more' : '')
+      )
     );
-    flow.append(line);
   } else {
     flow.append(el('p', 'flow-sources', ''));
   }
@@ -404,8 +451,6 @@ function renderArticleFlow(a, section) {
 }
 
 async function renderMagazine(date, anchor) {
-  if (!loadEdition(date)) return renderArchive();
-
   document.title = state.edition.title;
   editionName.textContent = state.edition.title;
   backBtn.hidden = false;
@@ -481,27 +526,40 @@ function leaveMagazineIfOpen() {
  *   #/<date>/<section>/<slug> one story, scrolling
  * An article id is itself "section/slug", so it arrives split in two.
  */
-function route() {
+async function route(force) {
   leaveMagazineIfOpen();
-  if (!DATA || !editions().length) return noData();
 
   const parts = decodeURIComponent(location.hash.replace(/^#\/?/, ''))
     .split('/')
     .filter((p) => p !== '');
 
-  if (!parts.length) {
-    const date = latestDate();
-    return date ? renderContents(date) : renderArchive();
+  try {
+    await loadIndex(force);
+  } catch (e) {
+    return offline(e);
   }
-  if (parts[0] === 'archive') return renderArchive();
+
+  if (!cache.editions.length) return noEditions();
+
+  const wantsArchive = parts[0] === 'archive';
+  const date = wantsArchive ? null : parts[0] || latestDate();
+
+  if (wantsArchive || !date) return renderArchive();
+
+  try {
+    if (!(await loadEdition(date))) return renderArchive();
+  } catch (e) {
+    return offline(e);
+  }
+
   if (parts[1] === 'read') {
-    return renderMagazine(parts[0], parts[3] ? parts[2] + '/' + parts[3] : null);
+    return renderMagazine(date, parts[3] ? parts[2] + '/' + parts[3] : null);
   }
-  if (parts.length >= 3) return renderArticle(parts[0], parts[1] + '/' + parts[2]);
-  return renderContents(parts[0]);
+  if (parts.length >= 3) return renderArticle(date, parts[1] + '/' + parts[2]);
+  return renderContents(date);
 }
 
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => route());
 
 backBtn.addEventListener('click', () => {
   location.hash = state.date ? '#/' + state.date : '#/';
@@ -517,16 +575,39 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') backBtn.click();
 });
 
-// Theme: explicit choice wins over the system setting, and persists.
+/* Theme: an explicit choice wins over the system setting, and persists.
+ *
+ * Storage is wrapped because it is not always there to be used -- Safari in
+ * private browsing and any embedded webview can make `localStorage` throw on
+ * access rather than return null, and an uncaught throw at this point would
+ * take the whole reader down with it over a colour preference.
+ */
+const store = {
+  get(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      /* preference simply will not persist */
+    }
+  },
+};
+
 const themeBtn = document.getElementById('theme');
-const saved = localStorage.getItem('theme');
+const saved = store.get('theme');
 if (saved) document.documentElement.dataset.theme = saved;
 themeBtn.addEventListener('click', () => {
   const now = document.documentElement.dataset.theme;
   const prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
   const next = (now || (prefersDark ? 'dark' : 'light')) === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
-  localStorage.setItem('theme', next);
+  store.set('theme', next);
 });
 
 route();
