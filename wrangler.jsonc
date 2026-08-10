@@ -17,15 +17,37 @@
   "name": "kagizine",
   "main": "src/worker.py",
 
-  // Pinned deliberately. The compatibility date selects the Pyodide build, so
-  // moving it changes the Python runtime under the Worker -- that is a
-  // deliberate upgrade with a redeploy and a smoke test, never a drive-by edit.
-  //
-  // It must also not run ahead of the workerd binary that wrangler ships: a
-  // date the local runtime does not know about fails to start with "newest date
-  // supported by this server binary", so raising this means upgrading wrangler
-  // in the same commit.
-  "compatibility_date": "2026-08-08",
+  /**
+   * This date is pinned inside a narrow window, and both walls are real. It is
+   * not routine maintenance -- read this before changing it.
+   *
+   * The compatibility date selects which Pyodide build runs the Worker.
+   *
+   * The ceiling: recent runtimes cannot be deployed at all. At upload
+   * Cloudflare executes the entrypoint and snapshots the interpreter's memory,
+   * and on both 2026-05-01 and 2026-08-08 that step dies inside the platform's
+   * own loader with
+   *
+   *     Uncaught Error: Dynamic require of "fs" is not supported
+   *       at instantiateEmscriptenModule ... in loadPyodide
+   *
+   * before any of this code runs. Neither `nodejs_compat` nor
+   * `disable_python_process_pth_files` helps; both were tried. The trap is that
+   * those dates work perfectly under `pywrangler dev`, because local workerd
+   * takes no snapshot -- so the failure exists only at deploy.
+   *
+   * The floor: before 2025-08-14 the runtime wants module-level `on_fetch`
+   * handlers instead of a `WorkerEntrypoint` subclass, so 2025-06-01 uploads
+   * cleanly and then throws "Method on_fetch does not exist" on every request
+   * -- a green deploy and a dead Worker. Enabling `python_no_global_handlers`
+   * explicitly would also work; using the date where it is the default is
+   * plainer.
+   *
+   * 2025-09-15 is verified on both counts: it deploys, and /api/health answers
+   * in production. If you raise it, deploy AND then curl the live health
+   * endpoint -- a successful upload proves nothing here.
+   */
+  "compatibility_date": "2025-09-15",
   "compatibility_flags": ["python_workers"],
 
   "observability": { "enabled": true },
