@@ -211,6 +211,9 @@ class Default(WorkerEntrypoint):
             "pictures": report["pictures"],
             "failures": report["failures"],
             "warnings": len(report["warnings"]),
+            # Surfaced because the cron logs this dict: a rising retry count is
+            # the early warning that the image proxy is getting flaky.
+            "image_retries": report.get("image_retries", 0),
             "seconds": {
                 "feeds": report.get("feeds_seconds"),
                 "images": report.get("images_seconds"),

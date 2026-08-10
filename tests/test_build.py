@@ -352,3 +352,55 @@ class TestPictureFloor:
         figure = articles["world/story"]["blocks"][0]
         assert figure["kind"] == "figure"
         assert (figure["width"], figure["height"]) == (240, 120)
+
+
+class TestImageRetry:
+    """One retry, because a transient failure otherwise costs a whole day."""
+
+    class Flaky(Fake):
+        def __init__(self, responses, fail_times):
+            super().__init__(responses)
+            self.fail_times = fail_times
+            self.attempts = 0
+
+        async def fetch_bytes(self, url):
+            if url.startswith("https://img"):
+                self.attempts += 1
+                if self.attempts <= self.fail_times:
+                    raise RuntimeError("transient proxy error")
+            return await super().fetch_bytes(url)
+
+    def _responses(self):
+        return {
+            "https://feed/world": fx.channel("World", BUILT, fx.item("Story")),
+            "https://feed/science": fx.channel("Science", BUILT, ""),
+            "https://img.example/one.png": fx.png(400, 300),
+        }
+
+    async def test_a_single_transient_failure_is_retried(self):
+        fake = self.Flaky(self._responses(), fail_times=1)
+        _, articles, report = await B.build_edition(
+            fake.fetch_bytes, fake.put_image, TWO_FEEDS
+        )
+        figure = articles["world/story"]["blocks"][0]
+        assert figure["kind"] == "figure"
+        assert report["image_retries"] == 1
+        assert report["pictures"] == 1
+
+    async def test_two_failures_give_up_and_the_story_survives(self):
+        fake = self.Flaky(self._responses(), fail_times=2)
+        _, articles, report = await B.build_edition(
+            fake.fetch_bytes, fake.put_image, TWO_FEEDS
+        )
+        assert all(b["kind"] != "figure" for b in articles["world/story"]["blocks"])
+        assert report["image_retries"] == 2
+        assert any("picture unavailable" in w for w in report["warnings"])
+
+    async def test_an_error_page_is_not_retried(self):
+        # Nothing transient about a 403 body: a second look wastes a request.
+        fake = feeds_with(
+            fx.item("Story"), "", **{"https://img.example/one.png": b"<html>Forbidden</html>" * 10}
+        )
+        _, _, report = await B.build_edition(fake.fetch_bytes, fake.put_image, TWO_FEEDS)
+        assert report["image_retries"] == 0
+        assert fake.requests.count("https://img.example/one.png") == 1

@@ -153,8 +153,9 @@ async def build_edition(fetch_bytes, put_image, feeds=None, is_current=None):
     # --- the pictures ----------------------------------------------------
     clock = time.monotonic()
     wanted = [p for p in picked if p["image_url"]]
+    image_stats: dict = {}
     stored = await gather_limited(
-        [_image_fetcher(fetch_bytes, put_image, p["image_url"]) for p in wanted]
+        [_image_fetcher(fetch_bytes, put_image, p["image_url"], image_stats) for p in wanted]
     )
     for p, result in zip(wanted, stored):
         if isinstance(result, Exception) or result is None:
@@ -167,6 +168,7 @@ async def build_edition(fetch_bytes, put_image, feeds=None, is_current=None):
             p["image"] = dict(result, alt=p["alt"])
 
     report["images_seconds"] = round(time.monotonic() - clock, 2)
+    report["image_retries"] = image_stats.get("retries", 0)
 
     # --- articles and sections ------------------------------------------
     clock = time.monotonic()
@@ -235,27 +237,42 @@ def _fetcher(fetch_bytes, url):
     return run
 
 
-def _image_fetcher(fetch_bytes, put_image, url):
+def _image_fetcher(fetch_bytes, put_image, url, stats=None):
     """Fetch one picture, store it under its content hash, return its metadata.
 
     Content-addressed so the same photograph appearing in two sections -- or on
     two days -- is stored once, and so a stored object never has to be
     invalidated: the key changes when the bytes do, which is what lets the
     Worker serve pictures as immutable.
+
+    One retry, because this runs unattended: a single transient failure at the
+    image proxy was observed to cost a story its picture for the whole day, and
+    there is no second chance until tomorrow. Only transport errors are retried
+    -- an error page or a spacer will be exactly the same on a second look, so
+    those fail immediately.
     """
 
     async def run():
-        data, _ = await fetch_bytes(url)
-        if not data or len(data) < MIN_BYTES:
-            return None
-        mime = I.content_type(data)
-        size = I.dimensions(data)
-        if not mime or not size:
-            return None  # not an image, or a format we cannot measure
-        if size[0] < MIN_WIDTH or size[1] < MIN_HEIGHT:
-            return None  # a spacer or an icon, not a photograph
-        key = "%s.%s" % (hashlib.sha256(data).hexdigest(), I.extension(mime))
-        await put_image(key, data, mime)
-        return {"asset": key, "width": size[0], "height": size[1]}
+        error = None
+        for attempt in (1, 2):
+            try:
+                data, _ = await fetch_bytes(url)
+            except Exception as e:
+                error = e
+                if stats is not None:
+                    stats["retries"] = stats.get("retries", 0) + 1
+                continue
+            if not data or len(data) < MIN_BYTES:
+                return None
+            mime = I.content_type(data)
+            size = I.dimensions(data)
+            if not mime or not size:
+                return None  # not an image, or a format we cannot measure
+            if size[0] < MIN_WIDTH or size[1] < MIN_HEIGHT:
+                return None  # a spacer or an icon, not a photograph
+            key = "%s.%s" % (hashlib.sha256(data).hexdigest(), I.extension(mime))
+            await put_image(key, data, mime)
+            return {"asset": key, "width": size[0], "height": size[1]}
+        raise error
 
     return run
