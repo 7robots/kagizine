@@ -20,12 +20,6 @@ Single source of truth for planned and deferred work on kagizine.
 
 ## Deferred
 
-- **A test suite.** Dropped along with the Python implementation by choice, so
-  `src/kagi/feed.ts` — the sanitiser, and the security boundary of the project —
-  currently has nothing guarding it. The port was verified by diffing its output
-  against the Python one and by a throwaway probe of hostile inputs; neither
-  survives as a check. Adding vitest over the pure functions would cost little
-  and is the first thing to do if this code is touched again.
 - **Caching R2 reads at the edge.** `/api/editions/:date` and `/img/:asset` go to
   R2 on every request, which measures at 40–100ms. Both are effectively
   immutable, so wrapping them in the Cache API would take repeat reads off R2
@@ -50,6 +44,10 @@ Single source of truth for planned and deferred work on kagizine.
   is not.
 
 ## Known limitations
+
+- **No CI.** The suite runs on demand, not on push, so nothing stops a broken
+  commit reaching `main`. Deliberate for now; `vitest` in GitHub Actions would be
+  cheap if that changes.
 
 - **Reading times run short.** A Kagi cluster is a summary — most stories are one
   or two minutes, so an edition is around thirty-five minutes end to end. That is

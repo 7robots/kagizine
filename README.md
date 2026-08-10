@@ -67,19 +67,28 @@ maintainability; the latency argument was measurement error.
 
 ```sh
 npm install
+npm test                 # 113 tests, inside workerd
 npm run typecheck        # tsc --noEmit
 npm run dev              # local Worker, with a simulated R2 bucket
 npm run deploy           # wrangler deploy
 npm run tail             # production logs
 ```
 
-There is no test suite: it was dropped with the Python implementation by
-choice. The port was verified instead by building an edition with both
-implementations from the same feeds and diffing the results -- identical article
-ids, blocks, sanitised markup, word counts and image content hashes -- plus a
-throwaway probe that ran the retired suite's hostile inputs through the shipped
-sanitiser. Neither of those runs on its own now, so **changes to
-`src/kagi/feed.ts` are unguarded**; that is the standing risk of this layout.
+The tests run in workerd rather than Node, which is a requirement rather than a
+preference: the sanitiser is built on `HTMLRewriter` and the content-addressing
+on `crypto.subtle`, so a Node harness could only exercise a reimplementation of
+the part that matters. Coverage is weighted towards attempts to defeat the
+sanitiser.
+
+Two configuration traps, both of which fail at load with unhelpful errors:
+`defineWorkersConfig` from `@cloudflare/vitest-pool-workers/config` does not
+exist in the vitest-4 line -- the entry point is the `cloudflareTest` plugin --
+and the package is ESM-only, so the config must be `vitest.config.mts` unless the
+whole package becomes `type: module`.
+
+The port from Python was additionally verified by building an edition with both
+implementations from the same feeds and diffing the results: identical article
+ids, blocks, sanitised markup, word counts and image content hashes.
 
 The dev server starts with an empty bucket. To build an edition into it:
 
