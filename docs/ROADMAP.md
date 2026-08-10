@@ -4,19 +4,10 @@ Single source of truth for planned and deferred work on kagizine.
 
 ## Next
 
-- **Continuous flow across stories.** Every story starts on a fresh page, so a
-  two-page story that ends a third of the way down leaves most of a page white.
-  A real magazine runs the next piece into that space behind a rule. The
-  paginator measures one article at a time, so this means measuring a whole
-  section as one flow and recording where each article begins.
-- **Section openers.** Four sections with no visual break between them; the
-  running head is the only signal you have crossed from World into Science.
-- **Read state.** Nothing remembers which stories you have already read, which
-  matters more for a daily than for a weekly. Position inside an edition is
-  restored by article, but "seen" is not tracked at all.
-- **A refresh that reports itself.** `reports/<date>.json` records timings,
-  warnings and feed failures, but nothing reads it. A failed feed on a Tuesday
-  is currently discovered by noticing a thin edition.
+Nothing outstanding on the reading experience. Section openers, read state and
+self-reporting refreshes are done; continuous flow between stories was
+considered and dropped — the white space at the end of a story reads fine, and
+buying it back would mean measuring a whole section as one flow.
 
 ## Deferred
 
@@ -68,6 +59,24 @@ Single source of truth for planned and deferred work on kagizine.
 - **Per-section feed choice.** The four feeds are a constant in
   `src/kagi/feed.ts`. Fine while the list is stable; a config binding the day it
   is not.
+
+## Done, for the record
+
+- **Section openers.** A page per section on the verso, so it faces the
+  section's first story: turn the page and "Science" appears on the left with its
+  lead on the right. Padded with a blank where the opener would otherwise land on
+  a recto.
+- **Read state.** Stories are marked read on view — in the scrolling article and
+  when their page is reached in magazine mode — with a marker in the contents
+  list, an unread count, and a mark-all toggle. Held in `localStorage`, keyed by
+  date *and* article id (an id is only "section/slug", so the same headline on two
+  days would otherwise share a marker), and pruned against the editions the
+  server still serves.
+- **A refresh that reports itself.** The build decides what is worth telling the
+  reader — only it can distinguish a failed feed from an empty section — and puts
+  it on the edition as `build.notices`, which the contents page shows when there
+  is anything to say. A clean morning says nothing. `GET /api/reports/:date`
+  serves the full report, and `/api/health` carries the last build's outcome.
 
 ## Accepted, with reasons
 

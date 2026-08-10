@@ -7,7 +7,7 @@
  *
  * Every string that came from the feed is inserted as textContent. Only
  * `Paragraph.html` and list items are set as HTML, and those are sanitised in
- * src/kagi/feed.py at the data boundary; everything else is plain text and must
+ * src/kagi/feed.ts at the data boundary; everything else is plain text and must
  * be escaped, which is what textContent does for us.
  */
 'use strict';
@@ -29,6 +29,30 @@ const state = { date: null, edition: null, articles: null };
 const cache = { editions: null, byDate: Object.create(null) };
 
 // ---------------------------------------------------------------- helpers
+
+/* Persistent storage, wrapped.
+ *
+ * Not always there to be used: Safari in private browsing and any embedded
+ * webview can make `localStorage` throw on *access* rather than return null, and
+ * an uncaught throw here would take the whole reader down over a colour
+ * preference or a read marker.
+ */
+const store = {
+  get(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      /* it simply will not persist */
+    }
+  },
+};
 
 function el(tag, className, text) {
   const n = document.createElement(tag);
@@ -95,6 +119,86 @@ function uniqueDomains(sources) {
   return seen;
 }
 
+/* Which stories have been read.
+ *
+ * Matters more for a daily than for a weekly: the edition changes under you
+ * every morning, and without this there is no way to tell what is new from what
+ * you finished yesterday.
+ *
+ * Keyed by date *and* article id, because an id is only "section/slug" -- the
+ * same headline on two days would otherwise share one marker. Kept as a single
+ * object so a write is one serialisation, and pruned against the editions the
+ * server still has, since those are gone after a fortnight and their markers
+ * would accumulate for ever.
+ */
+const READ_KEY = 'kagizine:read';
+
+const read = {
+  map: null,
+
+  load() {
+    if (this.map) return this.map;
+    try {
+      const parsed = JSON.parse(store.get(READ_KEY) || '{}');
+      this.map = parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+      this.map = {};
+    }
+    return this.map;
+  },
+
+  key(date, id) {
+    return date + '/' + id;
+  },
+
+  has(date, id) {
+    return Boolean(this.load()[this.key(date, id)]);
+  },
+
+  mark(date, id) {
+    const map = this.load();
+    const key = this.key(date, id);
+    if (map[key]) return false;
+    map[key] = 1;
+    this.save();
+    return true;
+  },
+
+  markAll(date, ids) {
+    const map = this.load();
+    for (const id of ids) map[this.key(date, id)] = 1;
+    this.save();
+  },
+
+  clear(date, ids) {
+    const map = this.load();
+    for (const id of ids) delete map[this.key(date, id)];
+    this.save();
+  },
+
+  unreadCount(date, ids) {
+    return ids.filter((id) => !this.has(date, id)).length;
+  },
+
+  /** Drop markers for editions the server no longer serves. */
+  prune(dates) {
+    const keep = new Set(dates);
+    const map = this.load();
+    let changed = false;
+    for (const key of Object.keys(map)) {
+      if (!keep.has(key.slice(0, 10))) {
+        delete map[key];
+        changed = true;
+      }
+    }
+    if (changed) this.save();
+  },
+
+  save() {
+    store.set(READ_KEY, JSON.stringify(this.map));
+  },
+};
+
 // -------------------------------------------------------------------- api
 
 async function getJSON(path) {
@@ -111,6 +215,7 @@ async function loadIndex(force) {
   if (cache.editions && !force) return cache.editions;
   const data = await getJSON('/api/editions');
   cache.editions = data.editions || [];
+  read.prune(cache.editions.map((e) => e.date));
   return cache.editions;
 }
 
@@ -231,13 +336,41 @@ function renderContents(date) {
     (n, id) => n + ((state.articles[id] && state.articles[id].word_count) || 0),
     0
   );
-  head.append(
-    el('p', 'contents-sub', ids.length + ' stories · about ' + readingTime(words) + ' end to end')
-  );
+  const unread = read.unreadCount(date, ids);
+  const sub = [ids.length + ' stories', 'about ' + readingTime(words) + ' end to end'];
+  if (unread && unread !== ids.length) sub.push(unread + ' unread');
+  if (!unread) sub.push('all read');
+  head.append(el('p', 'contents-sub', sub.join(' · ')));
 
+  /* What the morning's build wants to say for itself.
+   *
+   * A feed that failed used to be discovered by noticing a thin edition. The
+   * build now decides what is worth mentioning -- only it can tell a failed feed
+   * from a section that was legitimately empty -- and a clean morning says
+   * nothing at all, which is the normal case. */
+  const notices = (state.edition.build && state.edition.build.notices) || [];
+  if (notices.length) {
+    const box = el('div', 'build-notice');
+    box.append(el('strong', null, 'This morning’s fetch'));
+    const list = el('ul');
+    for (const line of notices) list.append(el('li', null, line));
+    box.append(list);
+    head.append(box);
+  }
+
+  const actions = el('div', 'contents-actions');
   const readBtn = el('a', 'read-cta', 'Read as a magazine');
   readBtn.href = '#/' + date + '/read';
-  head.append(readBtn);
+  actions.append(readBtn);
+
+  const toggle = el('button', 'mark-all', unread ? 'Mark all read' : 'Mark all unread');
+  toggle.addEventListener('click', () => {
+    if (read.unreadCount(date, ids)) read.markAll(date, ids);
+    else read.clear(date, ids);
+    renderContents(date);
+  });
+  actions.append(toggle);
+  head.append(actions);
   wrap.append(head);
 
   for (const section of state.edition.sections) {
@@ -251,6 +384,7 @@ function renderContents(date) {
 
       const link = el('a');
       link.href = '#/' + date + '/' + id;
+      if (read.has(date, id)) link.classList.add('is-read');
 
       const title = el('div', 'toc-title');
       title.append(el('span', null, a.title));
@@ -366,6 +500,8 @@ function sourceList(a) {
 function renderArticle(date, id) {
   const a = state.articles[id];
   if (!a) return renderContents(date);
+
+  read.mark(date, id);
 
   document.title = a.title;
   editionName.textContent = sectionTitle(a.section_slug);
@@ -497,10 +633,15 @@ async function renderMagazine(date, anchor) {
       assetUrl,
       renderArticleFlow,
       coverLine: leadHeadline(),
-      onPage: (articleId, index, total) => {
+      onPage: (articleId, index, total, sectionLabel) => {
         pos.textContent = index + 1 + ' / ' + total;
         const a = articleId && state.articles[articleId];
-        label.textContent = a ? a.title : state.edition.title;
+        // A section opener has no story to name, so the section names itself.
+        label.textContent = sectionLabel || (a ? a.title : state.edition.title);
+        // Reaching a story's page counts as having read it. Turning past a
+        // spread you did not look at is the cost, and it is a much smaller cost
+        // than a daily that never remembers anything.
+        if (articleId) read.mark(state.date, articleId);
       },
     },
     anchor
@@ -590,30 +731,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowLeft' && links.length > 1) links[0].click();
   if (e.key === 'Escape') backBtn.click();
 });
-
-/* Theme: an explicit choice wins over the system setting, and persists.
- *
- * Storage is wrapped because it is not always there to be used -- Safari in
- * private browsing and any embedded webview can make `localStorage` throw on
- * access rather than return null, and an uncaught throw at this point would
- * take the whole reader down with it over a colour preference.
- */
-const store = {
-  get(key) {
-    try {
-      return localStorage.getItem(key);
-    } catch (e) {
-      return null;
-    }
-  },
-  set(key, value) {
-    try {
-      localStorage.setItem(key, value);
-    } catch (e) {
-      /* preference simply will not persist */
-    }
-  },
-};
 
 const themeBtn = document.getElementById('theme');
 const saved = store.get('theme');

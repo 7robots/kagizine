@@ -338,6 +338,39 @@ export async function buildEdition(
     built_from: builtFrom,
   };
 
+  // What the reader should be told, decided here rather than in the reader: only
+  // the build knows the difference between a feed that failed and a section that
+  // happened to be empty. A clean morning produces an empty list and the contents
+  // page says nothing at all.
+  const notices: string[] = [];
+  for (const failure of report.failures) {
+    const title = feeds.find((f) => f.slug === failure.feed)?.title ?? failure.feed;
+    notices.push(`The ${title} feed did not respond, so that section is missing.`);
+  }
+  const missing = wanted.length - picked.filter((p) => p.image).length;
+  if (missing > 0) {
+    notices.push(
+      missing === 1
+        ? 'One picture could not be fetched.'
+        : `${missing} pictures could not be fetched.`
+    );
+  }
+  const unreadable = report.warnings.filter((w) => w.includes('could not parse')).length;
+  if (unreadable > 0) {
+    notices.push(
+      unreadable === 1
+        ? 'One story could not be read and was left out.'
+        : `${unreadable} stories could not be read and were left out.`
+    );
+  }
+
+  edition.build = {
+    notices,
+    pictures: picked.filter((p) => p.image).length,
+    pictures_expected: wanted.length,
+    failed_feeds: report.failures.map((f) => f.feed),
+  };
+
   report.edition_date = date;
   report.articles = Object.keys(articles).length;
   report.sections = sections.length;

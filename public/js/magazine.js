@@ -50,10 +50,29 @@ window.Magazine = (function () {
     }
   }
 
+  /** The story to come back to after a repagination.
+   *
+   * Searches forward from the current leaf, because covers, section openers and
+   * spread-padding blanks carry no article: standing on one of those and
+   * resizing would otherwise restore nothing and throw the reader back to the
+   * cover. Looking forward rather than back lands on the story that page was
+   * introducing, which is where you were heading.
+   */
   function currentArticleId() {
     if (!flip) return current.articleId;
-    const i = flip.getCurrentPageIndex();
-    return pages[i] ? pages[i].articleId : current.articleId;
+    for (let i = flip.getCurrentPageIndex(); i < pages.length; i++) {
+      if (pages[i] && pages[i].articleId) return pages[i].articleId;
+    }
+    return current.articleId;
+  }
+
+  /** An explicit label for the leaf pair at `index`, or null to name the story.
+   *
+   * Only section openers need one: on those pages there is no article to name,
+   * and falling back to the edition title would say nothing useful. */
+  function labelFor(index) {
+    const opener = [pages[index], pages[index + 1]].find((p) => p && p.kind === 'opener');
+    return opener ? opener.section.title : null;
   }
 
   /** Which story a spread is *about*.
@@ -115,10 +134,32 @@ window.Magazine = (function () {
       s.article_ids.map((id) => ({ id, section: s }))
     );
 
+    let openedSection = null;
+
     for (let n = 0; n < ordered.length; n++) {
       const { id, section } = ordered[n];
       const article = ctx.articles[id];
       if (!article) continue;
+
+      /* A page announcing each section.
+       *
+       * Without one, four sections run together and the running head is the only
+       * sign you have crossed from World into Science.
+       *
+       * Placed on a verso wherever there is a spread, so that the opener and the
+       * section's first story face each other: you turn the page and see
+       * "Science" on the left with its lead story on the right. That means
+       * padding with a blank when the opener would otherwise land on a recto --
+       * with the cover occupying index 0 by itself, odd indices are left-hand
+       * pages.
+       */
+      if (section !== openedSection) {
+        openedSection = section;
+        if (geo.spread && descriptors.length % 2 === 0) {
+          descriptors.push({ kind: 'blank', articleId: null });
+        }
+        descriptors.push({ kind: 'opener', articleId: null, section });
+      }
 
       const build = () => ctx.renderArticleFlow(article, section);
       const { pages: count, flow } = await window.Paginator.measure(build, geo, probeHost);
@@ -155,6 +196,8 @@ window.Magazine = (function () {
         el = buildCover(ctx, geo);
       } else if (d.kind === 'blank') {
         el = buildBlank(geo);
+      } else if (d.kind === 'opener') {
+        el = buildOpener(d.section, ctx, geo);
       } else {
         folio += 1;
         el = window.Paginator.buildPage(d.flow, geo, d.index, {
@@ -162,7 +205,7 @@ window.Magazine = (function () {
           folio,
         });
       }
-      el.dataset.density = d.kind === 'cover' ? 'hard' : 'soft';
+      el.dataset.density = d.kind === 'cover' || d.kind === 'opener' ? 'hard' : 'soft';
       el.dataset.pageIndex = String(i);
       d.el = el;
       stage.append(el);
@@ -188,11 +231,11 @@ window.Magazine = (function () {
       mobileScrollSupport: false,
     });
 
-    flip.loadFromHTML(stage.querySelectorAll('.page, .mag-cover, .mag-blank'));
+    flip.loadFromHTML(stage.querySelectorAll('.page, .mag-cover, .mag-blank, .mag-opener'));
 
     flip.on('flip', (e) => {
       current.articleId = labelArticleId(e.data);
-      if (ctx.onPage) ctx.onPage(current.articleId, e.data, pages.length);
+      if (ctx.onPage) ctx.onPage(current.articleId, e.data, pages.length, labelFor(e.data));
     });
 
     if (anchorArticleId) {
@@ -205,7 +248,7 @@ window.Magazine = (function () {
 
     const at = flip.getCurrentPageIndex();
     current.articleId = labelArticleId(at);
-    if (ctx.onPage) ctx.onPage(current.articleId, at, pages.length);
+    if (ctx.onPage) ctx.onPage(current.articleId, at, pages.length, labelFor(at));
     return { pageCount: pages.length };
   }
 
@@ -269,6 +312,43 @@ window.Magazine = (function () {
       month: 'long',
       year: 'numeric',
     });
+  }
+
+  /* A section opener: the section's name, and how much of it there is.
+   *
+   * Deliberately spare. It is a signpost between sections, and anything more
+   * than the name, a rule and a count starts competing with the stories. */
+  function buildOpener(section, ctx, geo) {
+    const el = document.createElement('div');
+    el.className = 'mag-opener';
+    el.style.width = geo.pageW + 'px';
+    el.style.height = geo.pageH + 'px';
+
+    const inner = document.createElement('div');
+    inner.className = 'mag-opener-inner';
+
+    const eyebrow = document.createElement('p');
+    eyebrow.className = 'mag-opener-eyebrow';
+    eyebrow.textContent = 'Section';
+    inner.append(eyebrow);
+
+    const title = document.createElement('h2');
+    title.textContent = section.title;
+    inner.append(title);
+
+    const count = section.article_ids.filter((id) => ctx.articles[id]).length;
+    const words = section.article_ids.reduce(
+      (n, id) => n + ((ctx.articles[id] && ctx.articles[id].word_count) || 0),
+      0
+    );
+    const sub = document.createElement('p');
+    sub.className = 'mag-opener-count';
+    sub.textContent =
+      count + (count === 1 ? ' story · ' : ' stories · ') + Math.max(1, Math.round(words / 250)) + ' min';
+    inner.append(sub);
+
+    el.append(inner);
+    return el;
   }
 
   function buildBlank(geo) {

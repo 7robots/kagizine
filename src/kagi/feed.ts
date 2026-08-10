@@ -119,6 +119,20 @@ export interface Article {
   audio_asset: null;
 }
 
+/** What the morning's build wants the reader to know.
+ *
+ *  Carried on the edition rather than fetched separately, so the contents page
+ *  can say "the Science feed did not respond" without a second request. The
+ *  full report lives at reports/<date>.json; this is only the part a reader
+ *  would care about. */
+export interface BuildSummary {
+  /** Reader-facing sentences. Empty on a clean build, which is the normal case. */
+  notices: string[];
+  pictures: number;
+  pictures_expected: number;
+  failed_feeds: string[];
+}
+
 export interface Edition {
   schema_version: number;
   date: string;
@@ -129,6 +143,7 @@ export interface Edition {
   sections: Section[];
   built_from: string;
   fetched_at?: string;
+  build?: BuildSummary;
 }
 
 export interface ItemFields {

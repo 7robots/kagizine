@@ -598,3 +598,69 @@
 @media (prefers-reduced-motion: reduce) {
   .mag-bar { transition: none; }
 }
+
+/* -------------------------------------------------------- section openers */
+
+/* A signpost between sections, and deliberately spare: anything more than the
+   name, a rule and a count starts competing with the stories it introduces.
+   Marked `hard` like the cover, so it turns as a stiff leaf rather than a sheet
+   of text. */
+.mag-opener {
+  position: relative;
+  background: var(--paper);
+  color: var(--ink);
+  overflow: hidden;
+  box-shadow: 0 18px 46px rgb(0 0 0 / 0.42);
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+/* The same paper grain as a text page, so an opener does not read as a
+   different stock. */
+.mag-opener {
+  background-image:
+    radial-gradient(ellipse at 22% 16%, rgb(255 255 255 / 0.28), transparent 42%),
+    radial-gradient(ellipse at 82% 76%, rgb(88 66 40 / 0.035), transparent 48%);
+}
+
+.mag-opener-inner { padding: 2rem; max-width: 80%; }
+
+.mag-opener-eyebrow {
+  font-family: var(--sans);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 1.25rem;
+}
+
+.mag-opener h2 {
+  font-family: var(--sans);
+  font-size: clamp(1.75rem, 5vw, 2.75rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin: 0;
+  text-wrap: balance;
+}
+
+/* The rule under the name is what makes it read as a title page. */
+.mag-opener h2::after {
+  content: "";
+  display: block;
+  width: 3rem;
+  height: 2px;
+  margin: 1.1rem auto 0;
+  background: var(--accent);
+}
+
+.mag-opener-count {
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 1.1rem 0 0;
+}

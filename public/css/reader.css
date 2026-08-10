@@ -461,3 +461,72 @@ body.in-magazine .topbar { display: none; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ------------------------------------------------- read state and notices */
+
+/* A story already read is stated quietly rather than hidden: the point is to
+   find what is new at a glance, not to lose track of what came before. The
+   marker is a dot in the margin plus reduced weight -- colour alone would carry
+   no meaning for a reader who cannot see it. */
+.toc a.is-read .toc-title > span:first-child { color: var(--ink-faint); }
+.toc a.is-read .toc-thumb { opacity: 0.55; }
+
+.toc a.is-read .toc-title { position: relative; }
+
+.toc a.is-read .toc-title::before {
+  content: "✓";
+  position: absolute;
+  left: -1.1rem;
+  top: 0.05em;
+  font-family: var(--sans);
+  font-size: 0.7rem;
+  color: var(--ink-faint);
+}
+
+@media (max-width: 46rem) {
+  /* No room for a margin marker; the dimmed headline carries it alone. */
+  .toc a.is-read .toc-title::before { display: none; }
+}
+
+.contents-actions { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.contents-actions .read-cta { margin-bottom: 0; }
+
+.mark-all {
+  font-family: var(--sans);
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  padding: 0.6rem 0.2rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 0.2em;
+}
+
+.mark-all:hover { color: var(--accent); text-decoration-color: currentColor; }
+
+/* Only shown when the morning's build had something to report. */
+.build-notice {
+  margin: 0 0 1.75rem;
+  padding: 0.9rem 1.1rem;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 0.3rem 0.3rem 0;
+  font-family: var(--sans);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.build-notice strong {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.4rem;
+}
+
+.build-notice ul { margin: 0; padding-left: 1.1rem; color: var(--ink-soft); }
+.build-notice li { margin-bottom: 0.2rem; }

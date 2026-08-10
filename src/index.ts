@@ -26,6 +26,7 @@ export interface Env {
 // Paths the Worker owns. Anything else is a static file and never reaches here.
 const IMG_RE = /^\/img\/([0-9a-f]{64}\.[a-z]{3,4})$/;
 const EDITION_RE = /^\/api\/editions\/(\d{4}-\d{2}-\d{2})$/;
+const REPORT_RE = /^\/api\/reports\/(\d{4}-\d{2}-\d{2})$/;
 
 /** Outbound request deadline. Feeds and pictures both go through it.
  *
@@ -102,6 +103,17 @@ export default {
       return jsonResponse(body, 'public, max-age=300');
     }
 
+    // The refresh keeps a report per day; until now nothing could read one, so a
+    // feed that failed on a Tuesday was discovered by noticing a thin edition.
+    // Public because it contains no secrets -- feed URLs that are already public,
+    // counts, timings, and the warnings the build raised.
+    const report = REPORT_RE.exec(path);
+    if (report) {
+      const body = await store.getText(env.EDITIONS, store.reportKey(report[1]!));
+      if (body === null) return error(404, 'no report for that date');
+      return jsonResponse(body, 'public, max-age=300');
+    }
+
     const image = IMG_RE.exec(path);
     if (image) return serveImage(env, image[1]!);
 
@@ -109,11 +121,30 @@ export default {
 
     if (path === '/api/health') {
       const index = await store.readIndex(env.EDITIONS);
+      const latest = index.editions[0]?.date ?? null;
+      // Carries the last build's outcome, so one request answers "did this
+      // morning go well?" without reading a 290KB edition.
+      const last = latest
+        ? await store.getJson<build.Report>(env.EDITIONS, store.reportKey(latest))
+        : null;
       return jsonResponse(
         JSON.stringify({
           ok: true,
           editions: index.editions.length,
-          latest: index.editions[0]?.date ?? null,
+          latest,
+          last_refresh: last
+            ? {
+                finished_at: last.finished_at,
+                articles: last.articles,
+                pictures: last.pictures,
+                pictures_expected: last.pictures_expected,
+                failed_feeds: last.failures.map((f) => f.feed),
+                warnings: last.warnings.length,
+                picture_ms_median: last.image_ms_median,
+                picture_ms_slowest: last.image_ms_slowest,
+                images_ms: last.images_ms,
+              }
+            : null,
         }),
         'no-store'
       );

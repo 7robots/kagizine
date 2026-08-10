@@ -27,6 +27,15 @@ Open the site. Arrow keys, `PageUp`/`PageDown`, space, or dragging a page corner
 turn the page; **Contents** in the bottom bar or `Esc` backs out; **Archive** in
 the top bar reaches earlier editions (fourteen are kept).
 
+Each section gets an opening page, placed on a left-hand page so it faces the
+section's first story. Stories are marked read as you go — on the contents page
+they dim and take a tick, and the header keeps an unread count with a mark-all
+toggle. That state is local to the browser and is pruned as editions age out.
+
+If the morning's fetch had trouble — a feed that did not answer, pictures that
+would not load, a story that could not be parsed — the contents page says so in
+a short note. A clean build says nothing.
+
 Two-page spreads appear on windows wide enough for two readable columns (≥1100px
 and landscape). Narrower or portrait windows get a single page, which on a phone
 or an iPad in portrait fits most stories whole.
@@ -137,7 +146,8 @@ every image response can honestly say `immutable`.
 | `GET /api/editions`       | the index |
 | `GET /api/editions/:date` | one edition, whole |
 | `GET /img/:asset`         | one picture, streamed from R2 |
-| `GET /api/health`         | edition count and latest date |
+| `GET /api/reports/:date`  | what that morning's refresh did |
+| `GET /api/health`         | edition count, latest date, and the last build's outcome |
 | `POST /admin/refresh`     | rebuild now; bearer token required |
 
 Static files are served by the Assets layer and never invoke the Worker at all,
