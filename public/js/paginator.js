@@ -66,10 +66,29 @@ window.Paginator = (function () {
     // book-shaped box; two lands near 55, the measure magazines actually use.
     // Narrow pages fall back to one, where two would be unreadably tight.
     const columns = contentW >= 460 ? 2 : 1;
-    const colGap = columns === 2 ? Math.round(Math.max(20, Math.min(34, contentW * 0.05))) : 0;
+
+    // The gap is computed even when there is only one column, and that is
+    // load-bearing rather than tidy-minded.
+    //
+    // `page-clip` is deliberately CLIP_SLACK wider than the content box so that
+    // justification and hyphenation cannot slice a glyph at the right edge (see
+    // buildPage). Those few pixels have to land on *empty space*. With two
+    // columns they land in this gap, which is why the spread has always looked
+    // right. With one column and a gap of zero, `strideW` equalled `contentW`
+    // exactly, so the next column began precisely where the clip ended -- and
+    // the slack put its first six pixels of text on screen, as a column of
+    // sliced characters down the outer edge of every page.
+    //
+    // It reads as a mobile bug because it needs a window wide enough for a
+    // spread but pages narrow enough for a single column: an iPad mini in
+    // landscape, or any desktop window around 1120px. `colGap * (columns - 1)`
+    // is zero here, so a single column still gets the full measure; only the
+    // stride moves.
+    const colGap = Math.round(Math.max(20, Math.min(34, contentW * 0.05)));
     const colW = Math.floor((contentW - colGap * (columns - 1)) / columns);
 
     // Distance from one page's first column to the next page's first column.
+    // Must exceed the clip width, or the clip shows part of the next column.
     const strideW = columns * (colW + colGap);
 
     return {
