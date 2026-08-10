@@ -5,10 +5,14 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
-  # Everything the reader needs is same-origin. `style-src` allows inline
-  # because StPageFlip writes style attributes on the leaves it owns; scripts
-  # get no such latitude, which is the half that matters.
-  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  # Everything the reader needs is same-origin, with one exception: Cloudflare
+  # injects its Web Analytics beacon into HTML responses at the edge, so
+  # static.cloudflareinsights.com is allowed to load and to report. Without both
+  # entries the beacon is blocked and logs a CSP violation on every page view.
+  # `style-src` allows inline because StPageFlip writes style attributes on the
+  # leaves it owns; scripts get no such latitude beyond that one host, which is
+  # the half that matters.
+  Content-Security-Policy: default-src 'none'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
 # Fingerprint-free filenames, so the HTML must always be revalidated or a
 # stylesheet change would never reach a browser that has the old one.
