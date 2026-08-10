@@ -1,10 +1,7 @@
 /**
  * kagizine -- Kagi News as a page-turning magazine.
  *
- * A Python Worker (Pyodide). Deploy with `npm run deploy`, which shells out to
- * `uv run pywrangler deploy` -- pywrangler resolves the Python dependencies and
- * snapshots the interpreter's linear memory before handing off to wrangler, so
- * plain `wrangler deploy` would ship a Worker that cold-starts far slower.
+ * A TypeScript Worker. Deploy with `npm run deploy`.
  *
  * Secrets (via `wrangler secret put`, never here):
  *   REFRESH_TOKEN -- bearer token for POST /admin/refresh. Canonical value is
@@ -15,40 +12,13 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "kagizine",
-  "main": "src/worker.py",
+  "main": "src/index.ts",
 
-  /**
-   * This date is pinned inside a narrow window, and both walls are real. It is
-   * not routine maintenance -- read this before changing it.
-   *
-   * The compatibility date selects which Pyodide build runs the Worker.
-   *
-   * The ceiling: recent runtimes cannot be deployed at all. At upload
-   * Cloudflare executes the entrypoint and snapshots the interpreter's memory,
-   * and on both 2026-05-01 and 2026-08-08 that step dies inside the platform's
-   * own loader with
-   *
-   *     Uncaught Error: Dynamic require of "fs" is not supported
-   *       at instantiateEmscriptenModule ... in loadPyodide
-   *
-   * before any of this code runs. Neither `nodejs_compat` nor
-   * `disable_python_process_pth_files` helps; both were tried. The trap is that
-   * those dates work perfectly under `pywrangler dev`, because local workerd
-   * takes no snapshot -- so the failure exists only at deploy.
-   *
-   * The floor: before 2025-08-14 the runtime wants module-level `on_fetch`
-   * handlers instead of a `WorkerEntrypoint` subclass, so 2025-06-01 uploads
-   * cleanly and then throws "Method on_fetch does not exist" on every request
-   * -- a green deploy and a dead Worker. Enabling `python_no_global_handlers`
-   * explicitly would also work; using the date where it is the default is
-   * plainer.
-   *
-   * 2025-09-15 is verified on both counts: it deploys, and /api/health answers
-   * in production. If you raise it, deploy AND then curl the live health
-   * endpoint -- a successful upload proves nothing here.
-   */
-  "compatibility_date": "2025-09-15",
-  "compatibility_flags": ["python_workers"],
+  // TypeScript on the standard runtime, so this is ordinary maintenance again:
+  // bump it, deploy, smoke-test. The Python implementation was pinned eleven
+  // months back between a deploy-breaking Pyodide snapshot bug and the
+  // pre-WorkerEntrypoint handler convention; neither constrains this one.
+  "compatibility_date": "2026-08-08",
 
   "observability": { "enabled": true },
 
@@ -58,8 +28,8 @@
    *
    * No `run_worker_first`: every path the Worker owns (/api/*, /img/*,
    * /admin/*) is absent from the asset manifest and therefore falls through to
-   * the Worker on its own. Letting assets answer first is what keeps the
-   * flipbook's JS and CSS on the edge cache rather than behind Pyodide.
+   * the Worker on its own. Letting assets answer first keeps the flipbook's JS
+   * and CSS on the edge cache and off the Worker entirely.
    */
   "assets": {
     "directory": "./public/",

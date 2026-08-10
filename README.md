@@ -1,7 +1,7 @@
 # kagizine
 
 A page-turning magazine reader for the [Kagi News](https://news.kagi.com/) daily
-feeds, running as a Python Cloudflare Worker at
+feeds, running as a TypeScript Cloudflare Worker at
 **[kagizine.7robots.org](https://kagizine.7robots.org)**.
 
 Kagi rebuilds its feeds each morning around 08:00 Eastern. A cron trigger picks
@@ -31,43 +31,55 @@ Two-page spreads appear on windows wide enough for two readable columns (≥1100
 and landscape). Narrower or portrait windows get a single page, which on a phone
 or an iPad in portrait fits most stories whole.
 
-## Why Python
+## It was Python first
 
-The Worker is Python on Pyodide, which is unusual enough to justify.
+The Worker was originally written in Python on Pyodide, and the git history has
+it. The appeal was that `src/kagi/` could be pure standard-library Python shared
+between the Worker and a CPython test suite -- one implementation of the feed
+format rather than two drifting apart.
 
-The payoff is that `src/kagi/` — the feed parser, the HTML sanitiser, the article
-builder — is pure Python with no I/O, and it is the *same code* the test suite
-runs under CPython and the Worker runs under Pyodide. There is one
-implementation of the Kagi feed format rather than a local one and a deployed one
-drifting apart. `xml.etree.ElementTree` and `html.parser` are both available
-under Pyodide, which is what makes that possible.
+It was ported to TypeScript for one measured reason and two structural ones.
 
-The costs are real and worth knowing before copying this pattern:
+The measured one: **a full refresh cost 17.1s of CPU in Python and costs 307ms
+in TypeScript**, a factor of fifty-six. Almost all of the Python time was
+copying image bytes across the Python/JavaScript boundary twice -- into the
+interpreter to be hashed, back out to R2 -- while the parsing itself was 0.03s.
+In TypeScript the bytes never leave the runtime: `arrayBuffer()` ->
+`crypto.subtle.digest` -> `bucket.put`. A build that sat at 17s against a 30s
+ceiling now has a hundredfold margin.
 
-- **No `urllib`, no `requests`** — a Worker has no sockets. All I/O is injected
-  by the caller, so `build_edition` takes a `fetch_bytes` and a `put_image` and
-  the tests pass in dictionaries.
-- **No Pillow** — no PyEmscripten wheel. Image dimensions come from
-  `src/kagi/images.py`, which reads them out of JPEG/PNG/GIF/WebP headers. Those
-  numbers are load-bearing: the paginator sizes every figure from them without
-  waiting for a decode, and a missing dimension shows up as text painted over a
-  picture.
-- **No threads** — `asyncio` with a concurrency cap instead.
-- **The compatibility date is pinned inside a narrow window.** Recent Pyodide
-  builds fail Cloudflare's deploy-time memory snapshot, and older ones want
-  module-level `on_fetch` handlers instead of a `WorkerEntrypoint` class. Both
-  walls, and how each one fails, are documented at length in `wrangler.jsonc`.
-  Read that before touching the date.
+The structural ones: the Python runtime was pinned eleven months back, wedged
+between a Pyodide build that failed Cloudflare's deploy-time memory snapshot and
+an older one that predated `WorkerEntrypoint`, so it could not be moved forward;
+and the toolchain needed `pywrangler`, a vendored `python_modules/`, and three
+lockfiles for one small app.
+
+What did *not* turn out to be a reason, despite being the argument that prompted
+the port: request latency. Measured with a fresh connection per request, the
+Python Worker looked like it was taking 2-4 seconds. Measured properly -- over
+one reused connection, so the TLS handshake is not counted -- the Worker adds
+essentially nothing over a static file (41ms median against 42ms for
+`/css/reader.css`), and an R2 read adds 40-100ms. The seconds were handshake and
+network variance in the machine doing the measuring. The port stands on CPU and
+maintainability; the latency argument was measurement error.
 
 ## Working on it
 
 ```sh
-npm install && uv sync
-npm test                 # 87 unit tests, on the same Python version Pyodide runs
+npm install
+npm run typecheck        # tsc --noEmit
 npm run dev              # local Worker, with a simulated R2 bucket
-npm run deploy           # uv run pywrangler deploy
+npm run deploy           # wrangler deploy
 npm run tail             # production logs
 ```
+
+There is no test suite: it was dropped with the Python implementation by
+choice. The port was verified instead by building an edition with both
+implementations from the same feeds and diffing the results -- identical article
+ids, blocks, sanitised markup, word counts and image content hashes -- plus a
+throwaway probe that ran the retired suite's hostile inputs through the shipped
+sanitiser. Neither of those runs on its own now, so **changes to
+`src/kagi/feed.ts` are unguarded**; that is the standing risk of this layout.
 
 The dev server starts with an empty bucket. To build an edition into it:
 
@@ -79,8 +91,7 @@ That runs the real cron path against the real feeds and writes to local R2.
 Note `127.0.0.1` rather than `localhost` if you are driving a headless browser
 against it.
 
-A successful `deploy` does **not** mean a working Worker — the two failure modes
-above are invisible at upload. Always follow a deploy with:
+Always follow a deploy with a live check:
 
 ```sh
 curl https://kagizine.7robots.org/api/health
@@ -89,13 +100,12 @@ curl https://kagizine.7robots.org/api/health
 ## How it works
 
 ```
-src/worker.py        the entrypoint: fetch (HTTP) and scheduled (cron)
-src/kagi/feed.py     parse and sanitise one item -> one article    (pure)
-src/kagi/build.py    sequence an edition, with I/O injected        (pure)
-src/kagi/images.py   dimensions from image headers                 (pure)
-src/kagi/store.py    R2, and the only Python/JavaScript boundary
+src/index.ts         the entrypoint: fetch (HTTP) and scheduled (cron)
+src/kagi/feed.ts     parse and sanitise one item -> one article
+src/kagi/build.ts    sequence an edition, with I/O injected
+src/kagi/images.ts   dimensions from image headers
+src/kagi/store.ts    R2
 public/              the reader: HTML, CSS, classic scripts
-tests/               the pure modules, under CPython
 ```
 
 In R2:
@@ -121,8 +131,8 @@ every image response can honestly say `immutable`.
 | `GET /api/health`         | edition count and latest date |
 | `POST /admin/refresh`     | rebuild now; bearer token required |
 
-Static files are served by the Assets layer and never invoke the Worker, so the
-reader's CSS and JS are on the edge cache rather than behind Pyodide.
+Static files are served by the Assets layer and never invoke the Worker at all,
+so the reader's CSS and JS come off the edge cache.
 
 ### Two cron triggers, one event
 
@@ -157,12 +167,20 @@ outlets it draws on.
 ## Security
 
 The reader sets exactly two things as HTML: `Paragraph.html` and list items.
-Both are sanitised in `src/kagi/feed.py` by a parser that emits only tags it
-wrote itself, with `href`s restricted to `http`/`https`. Everything else that
-came from a feed reaches the DOM through `textContent`. Adding a field to the
-reader means deciding which of those two categories it is in.
+Both are sanitised in `src/kagi/feed.ts`, where `HTMLRewriter` does the parsing
+and an allowlist decides what is emitted -- nothing reaches the output that that
+file did not write, and `href`s are restricted to `http`/`https`. Everything
+else that came from a feed reaches the DOM through `textContent`. Adding a field
+to the reader means deciding which of those two categories it is in.
 
-Security headers are set in two places on purpose: `src/worker.py` for responses
+Three properties of `HTMLRewriter` are load-bearing and were each established by
+experiment, not assumption: text arrives with entities *undecoded* (so blind
+escaping would double-escape), attribute values likewise (so an href must be
+decoded before its scheme is checked, or `&#106;avascript:` survives), and a
+`<script>` body still reaches a document text handler (so its contents must be
+muted, not merely dropped).
+
+Security headers are set in two places on purpose: `src/index.ts` for responses
 the Worker generates, and `public/_headers` for static responses that bypass the
 Worker entirely. The CSP forbids `unsafe-eval`, which is strict enough that
 Playwright's `wait_for_function` cannot run against the site — poll locators
