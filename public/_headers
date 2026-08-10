@@ -9,9 +9,12 @@
   # injects its Web Analytics beacon into HTML responses at the edge, so
   # static.cloudflareinsights.com is allowed to load and to report. Without both
   # entries the beacon is blocked and logs a CSP violation on every page view.
-  # `style-src` allows inline because StPageFlip writes style attributes on the
-  # leaves it owns; scripts get no such latitude beyond that one host, which is
-  # the half that matters.
+  # `style-src` allows inline because the vendored page-flip library injects its
+  # stylesheet as a <style> element when it loads. Not, as previously recorded
+  # here, because of style attributes -- the reader's own `el.style.width = ...`
+  # writes go through the CSSOM, which CSP does not govern at all. Moving that
+  # library's CSS into css/ would let this allowance go. Scripts get no such
+  # latitude beyond the one analytics host, which is the half that matters.
   Content-Security-Policy: default-src 'none'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
 # Fingerprint-free filenames, so the HTML must always be revalidated or a

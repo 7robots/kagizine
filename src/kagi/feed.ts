@@ -209,8 +209,13 @@ export function decodeEntities(text: string): string {
         return whole;
       }
     }
-    const named = NAMED[body.toLowerCase()];
-    return named === undefined ? whole : named;
+    // hasOwn, not a bare lookup: NAMED is an object literal, so `&constructor;`
+    // would otherwise resolve off Object.prototype and decode to the source text
+    // of the Object constructor. Corruption rather than a vulnerability -- the
+    // text path re-escapes and the result could never pass isSafeUrl -- but it
+    // silently mangles content.
+    const key = body.toLowerCase();
+    return Object.hasOwn(NAMED, key) ? NAMED[key]! : whole;
   });
 }
 

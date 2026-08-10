@@ -33,6 +33,21 @@ export const MIN_BYTES = 64;
  *  carry three to twelve. */
 export const MAX_ITEMS_PER_FEED = 60;
 
+/** Longest item body we will hand to the parser.
+ *
+ *  Real items run to about 15KB. This is not the real defence -- see the
+ *  try/catch around every parse below -- but there is no point spending CPU on
+ *  something already absurd. */
+export const MAX_DESCRIPTION_CHARS = 256 * 1024;
+
+/** Largest dimensions we will believe from an image header.
+ *
+ *  A 24-byte PNG can claim 4294967295 x 4294967295, and those numbers go
+ *  straight into the reader's width/height attributes, where the paginator
+ *  measures against them. The consequence is a wrecked or hung layout rather
+ *  than a compromise, but it is entirely attacker-chosen. */
+export const MAX_DIMENSION = 20_000;
+
 export type FetchBytes = (url: string) => Promise<{ data: Uint8Array; contentType: string | null }>;
 export type PutImage = (asset: string, data: Uint8Array, mime: string) => Promise<void>;
 export type IsCurrent = (date: string, builtFrom: string) => Promise<boolean>;
@@ -203,7 +218,28 @@ export async function buildEdition(
         continue;
       }
       seen.add(key);
-      const described = await F.describe(fields.description);
+
+      // Parsing is fallible in a way that used to cost the whole day.
+      // HTMLRewriter throws "The memory limit has been exceeded" on deeply
+      // nested inline markup -- around 20000 nested <b> tags, a 136KB item --
+      // and neither this call nor buildArticle caught it. The throw travelled
+      // out of the build, out of the refresh, and the scheduled handler logged a
+      // failure and published nothing at all. One hostile item in one of four
+      // feeds was a total outage. A story that will not parse is now one skipped
+      // story, which is how the image phase has always treated its own failures.
+      let described: F.Described;
+      try {
+        if (fields.description.length > MAX_DESCRIPTION_CHARS) {
+          throw new Error(`description of ${fields.description.length} characters`);
+        }
+        described = await F.describe(fields.description);
+      } catch (error) {
+        report.warnings.push(
+          `${feed.slug}: could not parse '${fields.title}' (${(error as Error).message})`
+        );
+        continue;
+      }
+
       const { url, alt } = F.leadImage(described);
       picked.push({ fields, section: feed, imageUrl: url, alt, described });
       kept += 1;
@@ -258,7 +294,16 @@ export async function buildEdition(
   const order = new Map(feeds.map((feed, index) => [feed.slug, index]));
 
   for (const p of picked) {
-    const article = await F.buildArticle(p.fields, p.section, p.image ?? null, p.described);
+    let article: F.Article;
+    try {
+      article = await F.buildArticle(p.fields, p.section, p.image ?? null, p.described);
+    } catch (error) {
+      // Same reasoning as the parse above: one story, not the edition.
+      report.warnings.push(
+        `${p.section.slug}: could not build '${p.fields.title}' (${(error as Error).message})`
+      );
+      continue;
+    }
     if (articles[article.id]) {
       // The same headline twice inside one section.
       article.slug = `${article.slug}-${Object.keys(articles).length}`;
@@ -354,6 +399,7 @@ async function fetchImage(
     const size = I.dimensions(data);
     if (!mime || !size) return null; // not an image, or a format we cannot measure
     if (size.width < MIN_WIDTH || size.height < MIN_HEIGHT) return null; // a spacer or an icon
+    if (size.width > MAX_DIMENSION || size.height > MAX_DIMENSION) return null; // not credible
 
     const asset = `${await sha256Hex(data)}.${I.extension(mime)}`;
     await putImage(asset, data, mime);

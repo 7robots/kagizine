@@ -34,6 +34,17 @@ Single source of truth for planned and deferred work on kagizine.
   deadline lost every picture, which is how the current 45s backstop was arrived
   at. The refresh now records median and slowest picture times, so the next
   unattended run should settle it.
+- **Dropping the CSP's remaining inline allowance.** `style-src 'unsafe-inline'`
+  is needed only because the vendored page-flip library injects its stylesheet as
+  a `<style>` element at load; moving that CSS into `public/css/` would let the
+  allowance go. `img-src data:` can go at the same time — it is required only by
+  `curl.js`, which is dead code (`USE_CURL = false`).
+- **Serialising the write path.** `upsertIndex` is a non-atomic
+  read-modify-write, so two overlapping refreshes can lose an index entry. Only
+  reachable with the refresh token, since the two crons are an hour apart, and the
+  one-hour grace window in `prune` already stops the damaging half (deleting a
+  concurrent run's pictures). Skipping `prune` on a forced refresh would close the
+  rest.
 - **An allowlist for the image host.** `<img src>` is scheme-checked now, but any
   http(s) URL a feed supplies is still fetched and republished at
   `/img/<hash>` as a public immutable object. Restricting it to Kagi's proxy host
@@ -57,6 +68,19 @@ Single source of truth for planned and deferred work on kagizine.
 - **Per-section feed choice.** The four feeds are a constant in
   `src/kagi/feed.ts`. Fine while the list is stable; a config binding the day it
   is not.
+
+## Accepted, with reasons
+
+- **`/admin/refresh` still answers 405 to a GET when armed and 404 when not**, so
+  an observer can tell the route is live. Flagged by the security review; kept
+  because distinguishing "wrong token" from "route absent" is worth more when
+  debugging by hand than the leak costs, given the token is what actually
+  protects it. The length leak in the comparison *was* fixed — it digests both
+  sides now.
+- **The image host is not allowlisted.** Any http(s) URL a feed supplies is
+  fetched and republished under `/img/<hash>`. Restricting it to Kagi's proxy
+  would close that, at the cost of images vanishing silently the day Kagi changes
+  hosts.
 
 ## Known limitations
 

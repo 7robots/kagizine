@@ -535,3 +535,21 @@ group('parsing the body once', () => {
     expect(article.blocks[0]).toMatchObject({ kind: 'p', html: 'from the precomputed pass' });
   });
 });
+
+group('entity decoding does not reach the prototype chain', () => {
+  it('leaves &constructor; alone', () => {
+    // A bare NAMED[key] lookup resolved this off Object.prototype and decoded it
+    // to the source text of the Object constructor.
+    expect(F.decodeEntities('&constructor;')).toBe('&constructor;');
+    expect(F.decodeEntities('a &toString; b')).toBe('a &toString; b');
+  });
+
+  it('still decodes the entities it should', () => {
+    expect(F.decodeEntities('&amp;&mdash;&#x27;')).toBe("&—'");
+  });
+
+  it('does not smuggle markup into a paragraph via &constructor;', async () => {
+    const out = await html('<p>&constructor;</p>');
+    expect(out).not.toContain('native code');
+  });
+});

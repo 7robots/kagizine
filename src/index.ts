@@ -168,7 +168,7 @@ async function adminRefresh(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') return error(405, 'POST only');
 
   const offered = request.headers.get('authorization') ?? '';
-  if (!timingSafeEqual(offered, `Bearer ${expected}`)) return error(401, 'unauthorized');
+  if (!(await secretsMatch(offered, `Bearer ${expected}`))) return error(401, 'unauthorized');
 
   const force = new URL(request.url).searchParams.has('force');
   try {
@@ -263,10 +263,21 @@ async function fetchBytes(url: string) {
   return { data, contentType: response.headers.get('content-type') };
 }
 
-/** Compared in constant time, so a wrong token leaks no prefix length. */
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
+/** Compare two secrets without revealing anything about the wrong one.
+ *
+ * Digests first, then a fixed-length comparison with no early return. Comparing
+ * the strings directly had to bail on a length mismatch, which made the token's
+ * length observable in the response timing -- a small leak, but one this removes
+ * for two lines. */
+async function secretsMatch(a: string, b: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [left, right] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(a)),
+    crypto.subtle.digest('SHA-256', encoder.encode(b)),
+  ]);
+  const x = new Uint8Array(left);
+  const y = new Uint8Array(right);
   let mismatch = 0;
-  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (let i = 0; i < x.length; i++) mismatch |= x[i]! ^ y[i]!;
   return mismatch === 0;
 }

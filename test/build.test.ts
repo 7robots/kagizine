@@ -442,3 +442,62 @@ describe('outbound request discipline', () => {
     expect(edition.built_from).toBe('Mon, 10 Aug 2026 12:00:00 +0000');
   });
 });
+
+
+describe('a hostile item cannot sink the edition', () => {
+  it('skips a story whose body defeats the parser', async () => {
+    // HTMLRewriter throws "The memory limit has been exceeded" on deeply nested
+    // inline markup. Unwrapped, that throw travelled out of the build and out of
+    // the refresh, and the scheduled handler published nothing at all: one item
+    // in one of four feeds was a total outage.
+    const bomb = '<b>'.repeat(20000);
+    const fake = feedsWith(
+      fx.item('Parser bomb', { body: `<p>${bomb}boom</p>`, image: null }) +
+        fx.item('Innocent bystander', { body: '<p>Fine.</p>', image: null })
+    );
+    const { articles, report } = await B.buildEdition(fake.fetchBytes, fake.putImage, FEEDS);
+    expect(articles['world/innocent-bystander']).toBeDefined();
+    expect(Object.keys(articles)).not.toContain('world/parser-bomb');
+    expect(report.warnings.some((w) => w.includes('could not parse'))).toBe(true);
+  });
+
+  it('refuses an absurdly long body before parsing it', async () => {
+    const huge = 'x'.repeat(B.MAX_DESCRIPTION_CHARS + 1);
+    const fake = feedsWith(
+      fx.item('Too long', { body: `<p>${huge}</p>`, image: null }) +
+        fx.item('Fine', { body: '<p>Short.</p>', image: null })
+    );
+    const { articles, report } = await B.buildEdition(fake.fetchBytes, fake.putImage, FEEDS);
+    expect(articles['world/fine']).toBeDefined();
+    expect(report.warnings.some((w) => w.includes('characters'))).toBe(true);
+  });
+
+  it('still publishes when every item in one feed is hostile', async () => {
+    const bomb = '<b>'.repeat(20000);
+    const fake = feedsWith(
+      fx.item('Bomb one', { body: `<p>${bomb}a</p>`, image: null }),
+      fx.item('Science holds', { section: 'Science', body: '<p>Fine.</p>', image: null })
+    );
+    const { edition, articles } = await B.buildEdition(fake.fetchBytes, fake.putImage, FEEDS);
+    expect(Object.keys(articles)).toEqual(['science/science-holds']);
+    expect(edition.sections.map((s) => s.slug)).toEqual(['science']);
+  });
+});
+
+describe('image dimensions are not taken on trust', () => {
+  it('rejects a header claiming impossible dimensions', async () => {
+    // A 24-byte PNG can declare 4294967295 square; those numbers reach the
+    // reader's width/height attributes and the paginator measures against them.
+    const absurd = fx.png(4294967295, 4294967295);
+    const fake = feedsWith(fx.item('Story'), '', { [IMG]: absurd });
+    const { articles } = await B.buildEdition(fake.fetchBytes, fake.putImage, FEEDS);
+    expect(fake.puts).toEqual([]);
+    expect(articles['world/story']!.blocks.every((b) => b.kind !== 'figure')).toBe(true);
+  });
+
+  it('accepts a large but credible photograph', async () => {
+    const fake = feedsWith(fx.item('Story'), '', { [IMG]: fx.png(5000, 3000) });
+    const { articles } = await B.buildEdition(fake.fetchBytes, fake.putImage, FEEDS);
+    expect(articles['world/story']!.blocks[0]).toMatchObject({ width: 5000, height: 3000 });
+  });
+});
