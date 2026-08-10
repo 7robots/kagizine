@@ -1,0 +1,443 @@
+/* Typography first. The page furniture and the flip come later; how a
+   paragraph sits on the page is what decides whether an hour of reading feels
+   good.
+
+   Fonts are a curated system stack for now -- these are genuinely good text
+   faces already present on macOS and iOS, and they work offline with nothing
+   to download. Bundled variable webfonts (Newsreader / Source Sans 3) land
+   with the type-preset switcher. */
+
+:root {
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Charter, Georgia,
+    "Times New Roman", serif;
+  --sans: ui-sans-serif, -apple-system, "Helvetica Neue", Arial, sans-serif;
+
+  /* Measured, not guessed: 34rem produced 53 characters per line, under the
+     58-66 that reads comfortably. 39rem lands at ~62. */
+  --measure: 39rem;
+  --gutter: clamp(1.25rem, 5vw, 4rem);
+
+  --ink: #1a1a18;
+  --ink-soft: #55534e;
+  --ink-faint: #8a877f;
+  --paper: #faf8f4;
+  --paper-raised: #fffefb;
+  --rule: #ddd8cd;
+  /* Burnt amber: Kagi's yellow is unreadable as small-caps text on cream, so
+     the identity is carried at a printable density instead of copied. */
+  --accent: #9e5210;
+  --accent-soft: #f5ece0;
+}
+
+:root:not([data-theme="light"]) {
+  @media (prefers-color-scheme: dark) {
+    --ink: #e8e4dc;
+    --ink-soft: #a9a49a;
+    --ink-faint: #74706a;
+    --paper: #161513;
+    --paper-raised: #1e1d1a;
+    --rule: #33312c;
+    --accent: #e0a35c;
+    --accent-soft: #2b2118;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ink: #e8e4dc;
+  --ink-soft: #a9a49a;
+  --ink-faint: #74706a;
+  --paper: #161513;
+  --paper-raised: #1e1d1a;
+  --rule: #33312c;
+  --accent: #e0a35c;
+  --accent-soft: #2b2118;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 1.1875rem;
+  line-height: 1.52;
+  font-kerning: normal;
+  font-variant-numeric: oldstyle-num;
+}
+
+/* ---------------------------------------------------------------- chrome */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem var(--gutter);
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--sans);
+  font-size: 0.8125rem;
+}
+
+.topbar button,
+.topbar a {
+  font: inherit;
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.topbar button:hover { background: var(--accent-soft); color: var(--accent); }
+.topbar .spacer { flex: 1; }
+
+.topbar .edition-name {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ shelf */
+
+main { padding: 0 var(--gutter) 6rem; }
+
+.shelf {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding-top: 3rem;
+}
+
+.shelf h1,
+.contents h1 {
+  font-family: var(--sans);
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 2rem;
+}
+
+.editions { display: grid; gap: 1.5rem; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); list-style: none; padding: 0; }
+
+.edition-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 0.4rem;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.edition-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgb(0 0 0 / 0.09); }
+.edition-card img { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; }
+.edition-card .meta { padding: 0.9rem 1rem 1.1rem; font-family: var(--sans); }
+.edition-card .meta strong { display: block; font-size: 1rem; }
+.edition-card .meta span { color: var(--ink-faint); font-size: 0.8125rem; }
+
+/* --------------------------------------------------------------- contents */
+
+.contents { max-width: 46rem; margin: 0 auto; padding-top: 3rem; }
+
+.section-block { margin-bottom: 2.75rem; }
+
+.section-heading {
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid var(--accent);
+  margin: 0 0 0.25rem;
+}
+
+.toc { list-style: none; margin: 0; padding: 0; }
+
+.toc li { border-bottom: 1px solid var(--rule); }
+
+.toc a {
+  display: flex;
+  gap: 1rem;
+  align-items: baseline;
+  padding: 0.7rem 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.toc a:hover .toc-title { color: var(--accent); }
+.toc-title { flex: 1; font-size: 1.0625rem; }
+
+/* One line of provenance under each headline. A feed item has no standfirst,
+   so this is where "when, how long, how many outlets" goes. */
+.toc-sub {
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  margin-top: 0.2rem;
+}
+
+.toc-thumb {
+  width: 4.5rem;
+  height: 3rem;
+  flex: none;
+  object-fit: cover;
+  border-radius: 0.2rem;
+  background: var(--rule);
+}
+
+/* ------------------------------------------------------- contents heading */
+
+.contents-head { margin-bottom: 2.5rem; }
+
+.contents-eyebrow {
+  font-family: var(--sans);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 0.5rem;
+}
+
+.contents-head h1 { margin-bottom: 0.4rem; }
+
+.contents-sub {
+  font-family: var(--sans);
+  font-size: 0.875rem;
+  color: var(--ink-faint);
+  margin: 0 0 1.75rem;
+}
+
+/* ---------------------------------------------------------------- article */
+
+article { max-width: var(--measure); margin: 0 auto; padding-top: 3.5rem; }
+
+.rubric {
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 0.6rem;
+}
+
+article h1 {
+  font-family: var(--sans);
+  font-size: clamp(1.9rem, 5vw, 2.75rem);
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  margin: 0 0 0.75rem;
+  text-wrap: balance;
+}
+
+.dek {
+  font-size: 1.25rem;
+  font-style: italic;
+  color: var(--ink-soft);
+  line-height: 1.4;
+  margin: 0 0 1.5rem;
+  text-wrap: pretty;
+}
+
+.byline {
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding-bottom: 1.75rem;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 2rem;
+}
+
+.prose p {
+  margin: 0;
+  text-wrap: pretty;
+  hyphens: auto;
+  hyphenate-limit-chars: 8 3 3;
+}
+
+/* Indent successive paragraphs rather than spacing them: a continuous column
+   of text reads as a publication, blank-line-separated blocks read as a web
+   page. */
+.prose p + p { text-indent: 1.35em; }
+
+.prose > p:first-of-type::first-letter {
+  -webkit-initial-letter: 3;
+  initial-letter: 3;
+  font-weight: 600;
+  margin-right: 0.08em;
+  color: var(--accent);
+}
+
+@supports not (initial-letter: 3) {
+  .prose > p:first-of-type::first-letter {
+    float: left;
+    font-size: 3.4em;
+    line-height: 0.86;
+    padding: 0.05em 0.09em 0 0;
+  }
+}
+
+.prose h2 {
+  font-family: var(--sans);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin: 2.25rem 0 0.85rem;
+  text-indent: 0;
+}
+
+.prose a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 0.15em; }
+.prose small { font-size: 0.9em; color: var(--ink-soft); }
+
+blockquote {
+  margin: 2rem 0;
+  padding-left: 1.25rem;
+  border-left: 3px solid var(--accent);
+  font-size: 1.35rem;
+  line-height: 1.32;
+  font-style: italic;
+  color: var(--ink-soft);
+  text-indent: 0;
+}
+
+blockquote cite { display: block; font-size: 0.875rem; font-style: normal; font-family: var(--sans); color: var(--ink-faint); margin-top: 0.6rem; }
+
+figure { margin: 2rem 0; text-indent: 0; }
+figure img { display: block; width: 100%; height: auto; border-radius: 0.2rem; background: var(--rule); }
+
+/* Wide and hero images break the measure; charts and portraits sit inside it. */
+figure[data-role="hero"],
+figure[data-role="full"] { width: min(58rem, 92vw); margin-inline: calc(50% - min(29rem, 46vw)); }
+figure[data-role="chart"] img { max-height: 78vh; object-fit: contain; }
+
+figcaption {
+  font-family: var(--sans);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--ink-faint);
+  margin-top: 0.5rem;
+}
+
+figcaption .credit { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.2rem; }
+
+.prose ul, .prose ol { margin: 1.25rem 0; padding-left: 1.4rem; text-indent: 0; }
+.prose li { margin-bottom: 0.4rem; }
+
+audio { width: 100%; margin: 1.5rem 0 0; }
+
+/* --------------------------------------------------------------- sources */
+
+.source-link {
+  display: inline-block;
+  font-family: var(--sans);
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.4rem 0.95rem;
+  margin-top: 2.5rem;
+}
+
+.source-link:hover { background: var(--accent-soft); }
+
+/* Kagi cites every outlet that carried a story -- often dozens. That is
+   reference material, so it is set as a compact apparatus at the foot rather
+   than as anything the eye has to read through. */
+.sources { margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); }
+
+.sources summary {
+  font-family: var(--sans);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.sources summary:hover { color: var(--accent); }
+.sources[open] summary { margin-bottom: 1.1rem; }
+
+.sources ul { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: 2rem; }
+.sources li { break-inside: avoid; margin-bottom: 0.7rem; font-size: 0.875rem; line-height: 1.35; }
+.sources a { color: inherit; text-decoration-color: var(--rule); }
+.sources a:hover { text-decoration-color: var(--accent); }
+
+.sources .domain {
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+@media (max-width: 40rem) {
+  .sources ul { columns: 1; }
+  .toc-thumb { display: none; }
+}
+
+.article-nav {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  max-width: var(--measure);
+  margin: 4rem auto 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+  font-family: var(--sans);
+  font-size: 0.875rem;
+}
+
+.article-nav a { color: var(--ink-soft); text-decoration: none; max-width: 45%; }
+.article-nav a:hover { color: var(--accent); }
+.article-nav .dir { display: block; font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+
+.read-cta {
+  display: inline-block;
+  font-family: var(--sans);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  color: var(--paper);
+  background: var(--accent);
+  padding: 0.6rem 1.2rem;
+  border-radius: 999px;
+  margin-bottom: 2.5rem;
+}
+
+.read-cta:hover { filter: brightness(1.12); }
+
+/* Magazine mode takes over the window entirely: the reader's own chrome would
+   both steal height from the page and break the illusion. */
+body.in-magazine { overflow: hidden; }
+body.in-magazine main,
+body.in-magazine .topbar { display: none; }
+
+.empty { max-width: 32rem; margin: 6rem auto; text-align: center; color: var(--ink-soft); }
+.empty code { font-family: ui-monospace, Menlo, monospace; background: var(--accent-soft); padding: 0.15em 0.4em; border-radius: 0.2rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
