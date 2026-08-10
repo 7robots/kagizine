@@ -65,8 +65,13 @@ function readingTime(words) {
   return Math.max(1, Math.round(words / 250)) + ' min';
 }
 
+/* Resolves a stored asset name for an <img src>.
+ *
+ * Returns null rather than '' when there is nothing to show: the viewer treats
+ * null as "no cover", while '' would resolve against the document URL and load
+ * the page into an <img>. */
 function assetUrl(name) {
-  return '/img/' + name;
+  return name ? '/img/' + name : null;
 }
 
 /* Never assign a URL from stored data to an href without checking its scheme.
@@ -570,8 +575,71 @@ function articleNav(date, id) {
 
 // --------------------------------------------------------- magazine mode
 
+/* Section openers, without touching the viewer.
+ *
+ * The viewer knows nothing about sections beyond their titles, and adding a page
+ * kind would mean patching a dependency we would then have to keep patching. It
+ * does not need patching: the host owns the article list and the flow for each
+ * article, so an opener is a synthetic one-page article inserted at the head of
+ * each section. The viewer paginates it like any other, and the bar names it like
+ * any other -- which is what we wanted the label to say anyway.
+ *
+ * The id carries a marker no real slug can produce (`slugify` emits only
+ * [a-z0-9-]), so openers can be filtered back out of the contents list, the story
+ * counts and the read state.
+ */
+const OPENER_MARK = '__opener';
+
+function openerId(section) {
+  return section.slug + '/' + OPENER_MARK;
+}
+
+function isOpener(id) {
+  return id.endsWith('/' + OPENER_MARK);
+}
+
+/** The edition as the viewer should see it: openers spliced in. */
+function editionWithOpeners() {
+  const articles = Object.create(null);
+  for (const [id, article] of Object.entries(state.articles)) articles[id] = article;
+
+  const sections = state.edition.sections.map((section) => {
+    const id = openerId(section);
+    articles[id] = { title: section.title, __section: section };
+    return Object.assign({}, section, { article_ids: [id].concat(section.article_ids) });
+  });
+
+  return { edition: Object.assign({}, state.edition, { sections }), articles };
+}
+
+function renderOpenerFlow(section) {
+  const flow = el('div');
+  const inner = el('div', 'flow-opener');
+  const box = el('div');
+  box.append(el('p', 'flow-opener-eyebrow', 'Section'));
+  box.append(el('h2', null, section.title));
+
+  const ids = section.article_ids;
+  const words = ids.reduce(
+    (n, id) => n + ((state.articles[id] && state.articles[id].word_count) || 0),
+    0
+  );
+  box.append(
+    el(
+      'p',
+      'flow-opener-count',
+      ids.length + (ids.length === 1 ? ' story · ' : ' stories · ') + readingTime(words)
+    )
+  );
+  inner.append(box);
+  flow.append(inner);
+  return flow;
+}
+
 /** One article as a single flowed subtree, for the paginator to column-break. */
 function renderArticleFlow(a, section) {
+  if (a && a.__section) return renderOpenerFlow(a.__section);
+
   const flow = el('div');
 
   flow.append(el('p', 'rubric', a.rubric || section.title));
@@ -613,47 +681,62 @@ async function renderMagazine(date, anchor) {
   document.body.append(root);
   document.body.classList.add('in-magazine');
 
-  // The bar is built here but attached after render(), which clears its host.
+  /* The bar is built here and attached after render(), which clears its host.
+   *
+   * The order is the viewer's, not ours: its stylesheet gives the first button
+   * the gap that separates the turn controls from the label, so prev has to come
+   * first. Our exit control is an extra button after next. */
   const bar = el('div', 'mag-bar');
   const prev = el('button', null, '‹');
   const label = el('span', 'mag-label');
   const pos = el('span', 'pos');
   const next = el('button', null, '›');
   const exit = el('button', null, 'Contents');
-  bar.append(exit, prev, label, pos, next);
+  bar.append(prev, label, pos, next, exit);
 
   prev.addEventListener('click', () => window.Magazine.prev());
   next.addEventListener('click', () => window.Magazine.next());
   exit.addEventListener('click', exitMagazine);
 
-  await window.Magazine.render(
-    {
-      edition: state.edition,
-      articles: state.articles,
-      assetUrl,
-      renderArticleFlow,
-      coverLine: leadHeadline(),
-      onPage: (articleId, index, total, sectionLabel) => {
-        pos.textContent = index + 1 + ' / ' + total;
-        const a = articleId && state.articles[articleId];
-        // A section opener has no story to name, so the section names itself.
-        label.textContent = sectionLabel || (a ? a.title : state.edition.title);
-        // Reaching a story's page counts as having read it. Turning past a
-        // spread you did not look at is the cost, and it is a much smaller cost
-        // than a daily that never remembers anything.
-        if (articleId) read.mark(state.date, articleId);
+  // Pinned open where there is no hover to reveal it.
+  if (matchMedia('(hover: none)').matches) bar.classList.add('visible');
+
+  const view = editionWithOpeners();
+
+  try {
+    await window.Magazine.render(
+      {
+        edition: view.edition,
+        articles: view.articles,
+        host: root,
+        assetUrl,
+        renderArticleFlow,
+        onPage: (articleId, index, total) => {
+          pos.textContent = index + 1 + ' / ' + total;
+          const a = articleId && view.articles[articleId];
+          label.textContent = a ? a.title : state.edition.title;
+          // Reaching a story's page counts as having read it. Openers are not
+          // stories and are excluded, or every section would mark itself read.
+          if (articleId && !isOpener(articleId)) read.mark(state.date, articleId);
+        },
       },
-    },
-    anchor
-  );
+      anchor
+    );
+  } catch (e) {
+    /* The viewer rejects if renderArticleFlow throws, and tears itself down
+       when it does -- no flipbook, no listeners, no half-built stage. Without a
+       catch that surfaces as an unhandled rejection and the reader is simply
+       gone, so fall back to the contents rather than to a blank screen. */
+    leaveMagazineIfOpen();
+    notice(
+      'Could not lay out this edition',
+      'Something in today’s stories defeated the page layout. The contents list still works.',
+      true
+    );
+    return;
+  }
 
   root.append(bar);
-}
-
-function leadHeadline() {
-  const first = orderedIds()[0];
-  const a = first && state.articles[first];
-  return a ? a.title : '';
 }
 
 function exitMagazine() {

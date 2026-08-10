@@ -1,0 +1,3 @@
+[submodule "vendor/magazine-web-viewer"]
+	path = vendor/magazine-web-viewer
+	url = https://github.com/ventz/magazine-web-viewer

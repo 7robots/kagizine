@@ -1,0 +1,165 @@
+/* Our content inside the viewer's pages.
+ *
+ * `css/magazine.css` comes from the upstream viewer and is byte-identical across
+ * consumers -- that is the point of the dependency, and its API.md is explicit
+ * that anything targeting `.flow` which is about *our* content rather than about
+ * pages belongs here instead.
+ *
+ * Two conventions, both taken from upstream so the two stylesheets agree:
+ *
+ *   - `font-size` is in `em`, never `rem`. The paginator sets `--type-scale` on
+ *     each flow and `.flow` resolves it once; anything sized in `rem` would keep
+ *     its size while the page around it shrank, which is exactly the mismatch
+ *     the type scale exists to avoid.
+ *   - Spacing stays in `rem`, as it does upstream.
+ */
+
+/* Standing in for the standfirst a feed item does not have: date, reading time,
+   source count. The rule under it separates the head of the story from its body,
+   and without something in this slot the headline sits straight on the text. */
+.flow .kicker {
+  font-family: var(--sans);
+  font-size: 0.625em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 0.9rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--rule);
+  text-indent: 0;
+  text-align: left;
+  break-after: avoid-column;
+}
+
+/* The close of a story: which outlets carried it, then the end mark. Kagi cites
+   up to sixty; naming them all is reference material, so the page gets the
+   domains and the scrolling view keeps the full list. */
+.flow .flow-sources {
+  font-family: var(--sans);
+  font-size: 0.625em;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  margin: 0.9rem 0 0;
+  text-indent: 0;
+  text-align: left;
+  break-inside: avoid-column;
+  /* Domain names must not hyphenate: "indianexpress.-com" is not a thing. */
+  hyphens: none;
+}
+
+.flow .flow-sources::after {
+  content: "";
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  margin-left: 0.5em;
+  background: var(--accent);
+  vertical-align: baseline;
+}
+
+/* Long lists must be allowed to break across columns.
+ *
+ * Upstream sets `break-inside: avoid-column` on every direct child of `.flow`
+ * and then exempts `p`. Kagi's Highlights run to five or six long bullets, and a
+ * list that has to stay whole cannot fit in a part-used column -- it jumps to the
+ * next page and leaves half a page of white behind it. Individual bullets stay
+ * intact, which is the level at which keeping things together actually matters.
+ *
+ * Offered upstream as a fix, since it is about pagination rather than about our
+ * content; kept here until it lands so the behaviour does not regress. */
+.flow ul,
+.flow ol {
+  break-inside: auto;
+}
+
+.flow li {
+  break-inside: avoid-column;
+}
+
+/* ------------------------------------------------------------ section opener */
+
+/* A page announcing each section.
+ *
+ * Built as an ordinary article flow rather than as a new page kind, so the
+ * viewer stays unmodified: the host inserts a synthetic one-page article at the
+ * head of each section and returns this subtree for it. See `openerId` in
+ * app.js.
+ *
+ * `column-span: all` is what makes it a page rather than a column: without it
+ * the opener would fill the first column of a two-column page and leave the
+ * second empty. Spanning both, with the height of the flow, gives a single
+ * centred page. */
+.flow .flow-opener {
+  column-span: all;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  text-indent: 0;
+}
+
+.flow .flow-opener-eyebrow {
+  font-family: var(--sans);
+  font-size: 0.625em;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 1.25rem;
+}
+
+.flow .flow-opener h2 {
+  font-family: var(--sans);
+  font-size: 2.4em;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin: 0;
+  color: var(--ink);
+  text-transform: none;
+  text-wrap: balance;
+  break-after: auto;
+}
+
+/* The rule under the name is what makes it read as a title page. */
+.flow .flow-opener h2::after {
+  content: "";
+  display: block;
+  width: 3rem;
+  height: 2px;
+  margin: 1.1rem auto 0;
+  background: var(--accent);
+}
+
+.flow .flow-opener-count {
+  font-family: var(--sans);
+  font-size: 0.75em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 1.1rem 0 0;
+}
+
+/* An opener is display type, not part of the text, so it carries neither a folio
+   nor a running head. Both are siblings of the flow added by the viewer's
+   `buildPage`, so they can only be reached from the page that contains one. */
+.page:has(.flow-opener) .page-folio,
+.page:has(.flow-opener) .page-running-head {
+  display: none;
+}
+
+/* ------------------------------------------------------------------- cover */
+
+/* The viewer's cover counts `Object.keys(ctx.articles)`, and the articles map we
+   hand it includes one synthetic opener per section -- so the count would read 36
+   where the edition has 32 stories. A wrong number is worse than no number, and
+   the masthead and date above it are what the cover is for.
+   
+   The honest fix is upstream: a `renderSectionOpener` hook would let the viewer
+   own opener pages and leave the articles map to real articles. Until then this
+   is the trade-off the synthetic-article approach buys, and it is recorded rather
+   than hidden. */
+.mag-cover-band p {
+  display: none;
+}

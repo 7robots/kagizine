@@ -5,13 +5,19 @@
   "description": "Page-turning magazine reader for the Kagi News daily feeds",
   "scripts": {
     "dev": "wrangler dev",
+    "predev": "node scripts/sync-viewer.mjs",
     "start": "wrangler dev",
+    "prestart": "node scripts/sync-viewer.mjs",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
-    "tail": "wrangler tail kagizine --format pretty",
+    "predeploy": "node scripts/sync-viewer.mjs",
     "test": "vitest run",
+    "pretest": "node scripts/sync-viewer.mjs",
     "test:watch": "vitest",
-    "types": "wrangler types"
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types",
+    "viewer:sync": "node scripts/sync-viewer.mjs",
+    "viewer:update": "git submodule update --remote vendor/magazine-web-viewer && node scripts/sync-viewer.mjs",
+    "tail": "wrangler tail kagizine --format pretty"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.21.0",

@@ -2,11 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- viewport-fit=cover is required by the viewer: .mag-root is sized in svh and
+     padded by the four env(safe-area-inset-*) values, so safe areas are handled
+     once, in one place. Without it the insets resolve to zero. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>Kagi News</title>
+<!-- reader.css defines the palette custom properties the viewer reads
+     (--paper, --ink, --ink-soft, --ink-faint, --rule, --accent, --sans) and sets
+     the body serif the flow inherits, so it must come first. -->
 <link rel="stylesheet" href="/css/reader.css">
-<link rel="stylesheet" href="/css/magazine.css">
+<link rel="stylesheet" href="/vendor/magazine-web-viewer/css/magazine.css">
+<link rel="stylesheet" href="/css/app-magazine.css">
 </head>
 <body>
 <header class="topbar">
@@ -19,10 +26,12 @@
 
 <main id="app"><p class="empty">Loading&hellip;</p></main>
 
-<script src="/js/vendor/page-flip.browser.js"></script>
-<script src="/js/paginator.js"></script>
-<script src="/js/curl.js"></script>
-<script src="/js/magazine.js"></script>
+<!-- The viewer, from vendor/magazine-web-viewer via scripts/sync-viewer.mjs.
+     Load order is part of its contract: magazine.js uses window.Paginator and
+     St.PageFlip at call time. -->
+<script src="/vendor/magazine-web-viewer/js/pageflip.js"></script>
+<script src="/vendor/magazine-web-viewer/js/paginator.js"></script>
+<script src="/vendor/magazine-web-viewer/js/magazine.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>
